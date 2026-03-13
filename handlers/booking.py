@@ -10,132 +10,74 @@ from states import BookingStates
 
 router = Router()
 
-# ========================================================================
-# УСЛУГИ, ПОРТФОЛИО И МОЯ ЗАПИСЬ (ПРОСМОТР)
-# ========================================================================
 @router.callback_query(F.data == "show_services")
 async def show_services(callback: types.CallbackQuery):
-    """Показывает все три блока услуг одним сообщением"""
     blocks = await db.get_service_blocks()
     if not blocks:
-        await callback.answer("Информация об услугах еще не заполнена.", show_alert=True)
+        await callback.answer("Услуги еще не заполнены.", show_alert=True)
         return
-    
-    full_message = (
-        "<b>✨ НАШИ УСЛУГИ И ЦЕНЫ ✨</b>\n\n"
-        "<b>💅 Основные услуги:</b>\n"
-        f"<i>{blocks.get('main_services', 'Не заполнено')}</i>\n\n"
-        "<b>➕ Дополнительно:</b>\n"
-        f"<i>{blocks.get('add_services', 'Не заполнено')}</i>\n\n"
-        "<b>🛡 Гарантия:</b>\n"
-        f"<i>{blocks.get('warranty', 'Не заполнено')}</i>"
-    )
-    await callback.message.edit_text(full_message, reply_markup=kb.back_to_main())
+    txt = (f"<b>✨ УСЛУГИ ✨</b>\n\n<b>💅 Основные:</b>\n{blocks.get('main_services')}\n\n"
+           f"<b>➕ Доп:</b>\n{blocks.get('add_services')}\n\n<b>🛡 Гарантия:</b>\n{blocks.get('warranty')}")
+    await callback.message.edit_text(txt, reply_markup=kb.back_to_main())
 
 @router.callback_query(F.data == "show_portfolio")
-async def show_portfolio(callback: types.CallbackQuery):
+async def show_port(callback: types.CallbackQuery):
     link = await db.get_portfolio()
-    if link:
-        kb_port = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="👀 Смотреть работы", url=link)],
-            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="to_main")]
-        ])
-        await callback.message.edit_text("Моё портфолио доступно по ссылке: 👇", reply_markup=kb_port)
-    else:
-        await callback.message.edit_text("Портфолио пока не заполнено.", reply_markup=kb.back_to_main())
+    if not link: await callback.answer("Портфолио нет.", show_alert=True); return
+    k = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="👀 Смотреть", url=link)], [types.InlineKeyboardButton(text="🔙 Назад", callback_data="to_main")]])
+    await callback.message.edit_text("Ссылка на работы:", reply_markup=k)
 
 @router.callback_query(F.data == "my_booking")
-async def my_booking(callback: types.CallbackQuery):
-    """Позволяет клиенту увидеть свою запись и отменить её"""
-    booking = await db.get_user_booking(callback.from_user.id)
-    if booking:
-        text = (f"<b>Ваша запись:</b>\n\n"
-                f"📅 Дата: {booking['date']}\n"
-                f"⏰ Время: {booking['time']}\n"
-                f"👤 Имя: {booking['user_name']}\n"
-                f"📞 Тел: {booking['user_phone']}")
-        
-        cancel_kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="❌ Отменить запись", callback_data="cancel_booking")],
-            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="to_main")]
-        ])
-        await callback.message.edit_text(text, reply_markup=cancel_kb)
-    else:
-        await callback.message.edit_text("У вас нет активных записей.", reply_markup=kb.back_to_main())
+async def my_book(callback: types.CallbackQuery):
+    b = await db.get_user_booking(callback.from_user.id)
+    if not b: await callback.message.edit_text("Нет записей.", reply_markup=kb.main_menu()); return
+    txt = f"📅 {b['date']}\n⏰ {b['time']}\n👤 {b['user_name']}\n📞 {b['user_phone']}"
+    k = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_booking")], [types.InlineKeyboardButton(text="🔙 Назад", callback_data="to_main")]])
+    await callback.message.edit_text(txt, reply_markup=k)
 
 @router.callback_query(F.data == "cancel_booking")
-async def cancel_booking(callback: types.CallbackQuery):
+async def cancel_book(callback: types.CallbackQuery):
     await db.cancel_booking(callback.from_user.id)
-    await callback.message.edit_text("✅ <b>Запись успешно отменена.</b>", reply_markup=kb.main_menu())
-    await callback.bot.send_message(config.ADMIN_ID, f"⚠️ <b>Отмена!</b> Клиент @{callback.from_user.username} отменил запись.")
+    await callback.message.edit_text("✅ Отменено.", reply_markup=kb.main_menu())
 
-# ========================================================================
-# ПРОЦЕСС ЗАПИСИ (КАЛЕНДАРЬ -> ВРЕМЯ -> ФИО -> ТЕЛ)
-# ========================================================================
 @router.callback_query(F.data == "start_booking")
-async def booking_calendar(callback: types.CallbackQuery, state: FSMContext):
-    if await db.user_has_booking(callback.from_user.id):
-        await callback.answer("У вас уже есть запись!", show_alert=True)
-        return
-
+async def book_start(callback: types.CallbackQuery, state: FSMContext):
+    if await db.user_has_booking(callback.from_user.id): await callback.answer("У вас уже есть запись!", show_alert=True); return
     dates = await db.get_available_dates()
     now = datetime.now()
-    calendar_markup = await kb.generate_calendar(now.month, now.year, dates, is_admin=False)
-    
-    await callback.message.edit_text("📅 <b>Выберите дату для записи:</b>", reply_markup=calendar_markup)
+    calendar_kb = await kb.generate_calendar(now.month, now.year, dates)
+    await callback.message.edit_text("Выберите дату:", reply_markup=calendar_kb)
     await state.set_state(BookingStates.choosing_date)
 
 @router.callback_query(BookingStates.choosing_date)
-async def booking_time(callback: types.CallbackQuery, state: FSMContext):
+async def book_date(callback: types.CallbackQuery, state: FSMContext):
     if callback.data == "ignore": return
     date = callback.data.split("_")[1]
     await state.update_data(date=date)
-    
     times = await db.get_slots_by_date(date)
-    if not times:
-        await callback.answer("Упс! На эту дату время уже заняли.", show_alert=True)
-        return
-
-    inline_kb = [[types.InlineKeyboardButton(text=t[1], callback_data=f"slot_{t[0]}_{t[1]}")] for t in times]
-    inline_kb.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="start_booking")])
-    
-    await callback.message.edit_text(f"📅 <b>Дата: {date}</b>\nВыберите свободное время:", 
-                                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=inline_kb))
+    k = [[types.InlineKeyboardButton(text=t[1], callback_data=f"slot_{t[0]}_{t[1]}")] for t in times]
+    k.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="start_booking")])
+    await callback.message.edit_text(f"Выбрано: {date}. Время:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=k))
     await state.set_state(BookingStates.choosing_time)
 
 @router.callback_query(BookingStates.choosing_time)
-async def booking_name(callback: types.CallbackQuery, state: FSMContext):
-    slot_id, slot_time = callback.data.split("_")[1], callback.data.split("_")[2]
-    await db.lock_slot(slot_id) # Бронь на 2 мин
-    await state.update_data(slot_id=slot_id, time=slot_time)
-    await callback.message.answer("👤 <b>Введите ваше Имя и Фамилию:</b>")
+async def book_time(callback: types.CallbackQuery, state: FSMContext):
+    d = callback.data.split("_")
+    await db.lock_slot(d[1]); await state.update_data(slot_id=d[1], time=d[2])
+    await callback.message.answer("Как вас зовут?")
     await state.set_state(BookingStates.entering_name)
 
 @router.message(BookingStates.entering_name)
-async def booking_phone(message: types.Message, state: FSMContext):
+async def book_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("📞 <b>Введите ваш номер телефона:</b>\n(Например: +79991234567)")
+    await message.answer("Телефон (+7...):")
     await state.set_state(BookingStates.entering_phone)
 
 @router.message(BookingStates.entering_phone)
-async def booking_finish(message: types.Message, state: FSMContext):
-    if not re.match(r"^\+?\d{10,15}$", message.text):
-        await message.answer("❌ <b>Ошибка!</b> Введите номер телефона цифрами.")
-        return
-    
+async def book_fin(message: types.Message, state: FSMContext):
+    if not re.match(r"^\+?\d{10,15}$", message.text): await message.answer("Неверный формат!"); return
     data = await state.get_data()
-    # Сохранение в БД
     await db.book_slot(data['slot_id'], message.from_user.id, data['name'], message.text)
-    
-    await message.answer(f"✅ <b>Успешно!</b>\nВы записаны на <b>{data['date']} в {data['time']}</b>.\nЖдем вас! ❤️", reply_markup=kb.main_menu())
-    
-    # Отчет для мастера и канала
-    report = (f"🎉 <b>НОВАЯ ЗАПИСЬ!</b>\n\n📅 <b>Дата:</b> {data['date']}\n⏰ <b>Время:</b> {data['time']}\n"
-              f"👤 <b>Клиент:</b> {data['name']}\n📞 <b>Тел:</b> <code>{message.text}</code>")
-    
-    await message.bot.send_message(config.ADMIN_ID, report)
-    if config.LOG_CHANNEL_ID != 0:
-        try: await message.bot.send_message(config.LOG_CHANNEL_ID, report)
-        except: pass
-    
+    await message.answer("✅ Вы записаны!", reply_markup=kb.main_menu())
+    await message.bot.send_message(config.ADMIN_ID, f"🎉 Запись!\n{data['name']} {message.text}\n{data['date']} {data['time']}")
     await state.clear()
