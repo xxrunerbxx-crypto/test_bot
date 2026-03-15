@@ -1,16 +1,27 @@
 import asyncio
 from aiogram import Bot, Dispatcher
-from handlers import admin, common # Добавь сюда свои другие роутеры
+from handlers import admin # Оставляем только админа, пока не создашь остальные файлы
 import database as db
 
 async def main():
+    # 1. Инициализация базы данных
     await db.init_db()
-    bot = Bot(token="ТВОЙ_ТОКЕН")
+    
+    # 2. Твой токен
+    bot = Bot(token="1193808132")
     dp = Dispatcher()
+    
+    # 3. Подключаем только те файлы, которые у тебя точно есть и работают
     dp.include_router(admin.router)
     
-    print("Бот запущен!")
+    # Очищаем очередь старых сообщений, чтобы бот не спамил при старте
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    print("🚀 Бот запущен и готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот выключен")
