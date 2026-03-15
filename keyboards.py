@@ -15,6 +15,7 @@ def main_menu():
 # Главное меню админа (новое)
 def get_admin_main_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    # ПРОВЕРЬ ЭТИ CALLBACK_DATA — они должны совпадать с admin.py
     builder.button(text="➕ Добавить окна", callback_data="admin_add_slot")
     builder.button(text="🗑 Удалить окна", callback_data="admin_delete_slots")
     builder.button(text="📢 Рассылка", callback_data="admin_broadcast")
@@ -31,11 +32,6 @@ def get_admin_delete_dates_kb(dates):
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text="❌ Отмена / В меню", callback_data="admin_main_menu"))
     return builder.as_markup()
-
-def back_to_main():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="to_main")]
-    ])
 
 def admin_time_templates():
     kb = [
@@ -64,18 +60,16 @@ async def generate_calendar(month: int, year: int, available_dates: list, is_adm
                 row.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
             else:
                 date_str = f"{day:02d}.{month:02d}"
+                # Админ видит все даты активными для добавления окон
                 if is_admin or date_str in available_dates:
-                    row.append(InlineKeyboardButton(text=str(day), callback_data=f"date_{date_str}"))
+                    row.append(InlineKeyboardButton(text=str(day), callback_data=f"admin_date_{date_str}"))
                 else:
                     row.append(InlineKeyboardButton(text="-", callback_data="ignore"))
         builder.row(*row)
-    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
-    
+    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="admin_main_menu"))
     return builder.as_markup()
 
-# Универсальная кнопка "Отмена / В меню"
 def get_admin_cancel_kb():
     builder = InlineKeyboardBuilder()
-    # Эта кнопка будет во всех подменю, чтобы всегда можно было выйти в начало
     builder.button(text="❌ В главное меню", callback_data="admin_main_menu")
     return builder.as_markup()
