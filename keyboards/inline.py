@@ -4,9 +4,9 @@ from aiogram.types import InlineKeyboardButton
 def main_menu():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="💅 Записаться", callback_data="start_booking"))
+    builder.row(InlineKeyboardButton(text="📋 Услуги", callback_data="services")) # Обновили тут
+    builder.row(InlineKeyboardButton(text="📸 Портфолио", callback_data="portfolio"))
     builder.row(InlineKeyboardButton(text="❌ Отменить запись", callback_data="cancel_booking"))
-    builder.row(InlineKeyboardButton(text="💰 Прайсы", callback_data="prices"),
-                InlineKeyboardButton(text="📸 Портфолио", callback_data="portfolio"))
     return builder.as_markup()
 
 def sub_check_kb(link):

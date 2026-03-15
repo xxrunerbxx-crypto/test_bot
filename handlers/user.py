@@ -24,24 +24,46 @@ async def is_subscribed(bot: Bot, user_id: int):
 @router.callback_query(F.data == "to_main")
 async def main_menu(event, state: FSMContext = None):
     if state: await state.clear()
-    text = "Привет! Я бот для записи на маникюр. Выберите действие:"
+    text = "💅 Привет! Я бот для записи на маникюр.\nВыберите действие ниже:"
     kb = inline.main_menu()
+    
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb)
     else:
         await event.message.edit_text(text, reply_markup=kb)
 
+@router.callback_query(F.data == "services")
+async def show_services(callback: CallbackQuery):
+    main, add, war = db.get_services()
+    text = (
+        f"<b>📋 НАШИ УСЛУГИ</b>\n\n"
+        f"<b>🔹 Основные:</b>\n{main}\n\n"
+        f"<b>➕ Дополнительно:</b>\n{add}\n\n"
+        f"<b>🛡 Гарантия:</b>\n{war}"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="💅 Записаться", callback_data="start_booking"))
+    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data == "portfolio")
+async def show_portfolio(callback: CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Смотреть портфолио", url="https://instagram.com/your_link"))
+    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
+    await callback.message.edit_text("📸 Мои работы доступны по ссылке ниже:", reply_markup=builder.as_markup())
+
 @router.callback_query(F.data == "start_booking")
 async def show_calendar(callback: CallbackQuery, bot: Bot):
     if not await is_subscribed(bot, callback.from_user.id):
-        return await callback.message.answer("Для записи необходимо подписаться на канал", 
+        return await callback.message.answer("❌ Для записи необходимо подписаться на канал", 
                                              reply_markup=inline.sub_check_kb(CHANNEL_LINK))
     
     if db.has_booking(callback.from_user.id):
         return await callback.answer("У вас уже есть активная запись!", show_alert=True)
 
     now = datetime.now()
-    await callback.message.edit_text("Выберите дату (прочерк означает, что мест нет):", 
+    await callback.message.edit_text("📅 Выберите дату для записи:\n(Число - есть места, прочерк - всё занято)", 
                                      reply_markup=generate_calendar(now.year, now.month, is_admin=False))
 
 @router.callback_query(F.data.startswith("user_date_"))
@@ -58,26 +80,23 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start_booking"))
     builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
     
-    await callback.message.edit_text(f"Свободное время на {date}:", reply_markup=builder.as_markup())
+    await callback.message.edit_text(f"⏰ Свободное время на {date}:", reply_markup=builder.as_markup())
     await state.set_state(BookingStates.choosing_time)
 
 @router.callback_query(BookingStates.choosing_time, F.data.startswith("slot_"))
 async def ask_name(callback: CallbackQuery, state: FSMContext):
-    _, s_id, s_time = callback.data.split("_")
-    await state.update_data(slot_id=s_id, time=s_time)
+    data = callback.data.split("_")
+    await state.update_data(slot_id=data[1], time=data[2])
     
-    kb = InlineKeyboardBuilder()
-    kb.add(InlineKeyboardButton(text="🏠 Отмена", callback_data="to_main"))
-    
-    await callback.message.edit_text("Введите ваше <b>Имя и Фамилию</b>:", parse_mode="HTML", reply_markup=kb.as_markup())
+    builder = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Отмена", callback_data="to_main"))
+    await callback.message.edit_text("👤 Введите ваше <b>Имя и Фамилию</b>:", parse_mode="HTML", reply_markup=builder.as_markup())
     await state.set_state(BookingStates.entering_name)
 
 @router.message(BookingStates.entering_name)
 async def ask_phone(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
-    kb = InlineKeyboardBuilder()
-    kb.add(InlineKeyboardButton(text="🏠 Отмена", callback_data="to_main"))
-    await message.answer("Введите ваш номер телефона:", reply_markup=kb.as_markup())
+    builder = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Отмена", callback_data="to_main"))
+    await message.answer("📞 Введите ваш <b>номер телефона</b>:", parse_mode="HTML", reply_markup=builder.as_markup())
     await state.set_state(BookingStates.entering_phone)
 
 @router.message(BookingStates.entering_phone)
@@ -88,21 +107,21 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
     db.create_booking(message.from_user.id, data['slot_id'], data['name'], phone, f"{data['date']} {data['time']}", str(job_id))
     
-    await message.answer(f"✅ <b>Запись успешно создана!</b>\n\nДата: {data['date']}\nВремя: {data['time']}", 
+    await message.answer(f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
                          parse_mode="HTML", reply_markup=inline.main_menu())
     
-    # Уведомления
-    msg = f"🆕 <b>Новая запись!</b>\n\nКлиент: {data['name']}\nТел: {phone}\nКогда: {data['date']} в {data['time']}"
+    # Уведомления админу и в канал
+    msg = f"🆕 <b>Новая запись!</b>\n\n👤 Клиент: {data['name']}\n📞 Тел: {phone}\n📅 Когда: {data['date']} в {data['time']}"
     await bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
     await bot.send_message(CHANNEL_ID, msg, parse_mode="HTML")
     await state.clear()
 
 @router.callback_query(F.data == "cancel_booking")
-async def cancel(callback: CallbackQuery):
+async def cancel_handler(callback: CallbackQuery):
     job_id = db.cancel_booking(callback.from_user.id)
     if job_id:
         try: scheduler.remove_job(job_id)
         except: pass
-        await callback.answer("Запись отменена", show_alert=True)
+        await callback.answer("✅ Запись отменена", show_alert=True)
     else:
         await callback.answer("У вас нет активных записей", show_alert=True)
