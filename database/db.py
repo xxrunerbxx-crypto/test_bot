@@ -53,7 +53,10 @@ class Database:
                 INSERT INTO services (id, main_services, additional_services, warranty, portfolio_link) 
                 VALUES (1, 'Не заполнено', 'Не заполнено', 'Не заполнено', 'https://t.me/telegram')
             """)
-            
+        # Добавь это в конец метода create_tables
+        self.cur.execute("CREATE INDEX IF NOT EXISTS idx_slots_date ON slots(date)")
+        self.cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id)")
+        self.conn.commit()   
         self.conn.commit()
 
     # --- МЕТОДЫ ДЛЯ УПРАВЛЕНИЯ СЛОТАМИ (АДМИН) ---

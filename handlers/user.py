@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.filters import Command
@@ -9,16 +11,40 @@ from keyboards import inline
 from keyboards.calendar_kb import generate_calendar
 from utils.states import BookingStates
 from utils.scheduler import schedule_reminder, scheduler
-from datetime import datetime
+from datetime import datetime,       time
 
 router = Router()
 
+@router.callback_query(F.data == "services")
+async def show_services(callback: CallbackQuery):
+    # Используем asyncio.to_thread для тяжелых запросов
+    services_data = await asyncio.to_thread(db.get_services)
+    
+    if not services_data:
+        main, add, war = "Не заполнено", "Не заполнено", "Не заполнено"
+    else:
+        main, add, war = services_data
+    
 async def is_subscribed(bot: Bot, user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
         return member.status in ["member", "administrator", "creator"]
     except:
         return False
+
+@router.message(Command("ping"))
+async def ping_test(message: Message):
+    start = time.perf_counter()
+    msg = await message.answer("Понг!")
+    end = time.perf_counter()
+    duration = (end - start) * 1000
+    await msg.edit_text(f"🏓 Понг! Задержка: {duration:.2f} мс")
+
+
+
+
+
+
 
 @router.message(Command("start"))
 @router.callback_query(F.data == "to_main")
