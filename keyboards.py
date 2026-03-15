@@ -3,73 +3,47 @@ from datetime import datetime
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-def main_menu():
-    kb = [
-        [InlineKeyboardButton(text="💅 Записаться", callback_data="start_booking")],
-        [InlineKeyboardButton(text="📅 Моя запись", callback_data="my_booking")],
-        [InlineKeyboardButton(text="📜 Услуги и цены", callback_data="show_services"),
-         InlineKeyboardButton(text="📸 Портфолио", callback_data="show_portfolio")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=kb)
-
-# Главное меню админа (новое)
-def get_admin_main_kb() -> InlineKeyboardMarkup:
+def get_admin_main_kb():
     builder = InlineKeyboardBuilder()
-    # ПРОВЕРЬ ЭТИ CALLBACK_DATA — они должны совпадать с admin.py
-    builder.button(text="➕ Добавить окна", callback_data="admin_add_slot")
-    builder.button(text="🗑 Удалить окна", callback_data="admin_delete_slots")
-    builder.button(text="📢 Рассылка", callback_data="admin_broadcast")
-    builder.button(text="⚙️ Услуги", callback_data="admin_setup_services")
-    builder.button(text="🖼 Ссылка на портфолио", callback_data="admin_set_portfolio")
-    builder.adjust(2)
-    return builder.as_markup()
-
-# Клавиатура выбора даты для УДАЛЕНИЯ
-def get_admin_delete_dates_kb(dates):
-    builder = InlineKeyboardBuilder()
-    for d in dates:
-        builder.button(text=f"📅 {d}", callback_data=f"del_date_{d}")
-    builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="❌ Отмена / В меню", callback_data="admin_main_menu"))
+    builder.row(InlineKeyboardButton(text="➕ Добавить окна", callback_data="adm_add"))
+    builder.row(InlineKeyboardButton(text="🗑 Удалить окна", callback_data="adm_del"))
+    builder.row(InlineKeyboardButton(text="📢 Рассылка", callback_data="adm_msg"))
+    builder.row(InlineKeyboardButton(text="⚙️ Услуги", callback_data="adm_serv"),
+                InlineKeyboardButton(text="🖼 Портфолио", callback_data="adm_port"))
     return builder.as_markup()
 
 def admin_time_templates():
     kb = [
-        [InlineKeyboardButton(text="🌅 Утро (9:00, 11:00, 13:00)", callback_data="tpl_morning")],
-        [InlineKeyboardButton(text="☀️ День (14:00, 16:00, 18:00)", callback_data="tpl_afternoon")],
-        [InlineKeyboardButton(text="🌙 Вечер (19:00, 21:00)", callback_data="tpl_evening")],
-        [InlineKeyboardButton(text="📅 Весь день", callback_data="tpl_fullday")],
-        [InlineKeyboardButton(text="🏠 Отмена", callback_data="admin_main_menu")]
+        [InlineKeyboardButton(text="🌅 Утро (9:00, 11:00, 13:00)", callback_data="tpl_9,11,13")],
+        [InlineKeyboardButton(text="☀️ День (14:00, 16:00, 18:00)", callback_data="tpl_14,16,18")],
+        [InlineKeyboardButton(text="🌙 Вечер (19:00, 21:00)", callback_data="tpl_19,21")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="adm_main")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 async def generate_calendar(month: int, year: int, available_dates: list, is_admin=False):
     builder = InlineKeyboardBuilder()
-    months_names = {
-        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
-        7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
-    }
-    builder.row(InlineKeyboardButton(text=f"{months_names[month]} {year}", callback_data="ignore"))
-    week_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    builder.row(*[InlineKeyboardButton(text=d, callback_data="ignore") for d in week_days])
-    month_calendar = calendar.monthcalendar(year, month)
-    for week in month_calendar:
-        row = []
+    months = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+    builder.row(InlineKeyboardButton(text=f"{months[month]} {year}", callback_data="ignore"))
+    
+    for day in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]:
+        builder.button(text=day, callback_data="ignore")
+    
+    month_days = calendar.monthcalendar(year, month)
+    for week in month_days:
         for day in week:
             if day == 0:
-                row.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
+                builder.button(text=" ", callback_data="ignore")
             else:
-                date_str = f"{day:02d}.{month:02d}"
-                # Админ видит все даты активными для добавления окон
-                if is_admin or date_str in available_dates:
-                    row.append(InlineKeyboardButton(text=str(day), callback_data=f"admin_date_{date_str}"))
+                d_str = f"{day:02d}.{month:02d}"
+                if is_admin or d_str in available_dates:
+                    builder.button(text=str(day), callback_data=f"date_{d_str}")
                 else:
-                    row.append(InlineKeyboardButton(text="-", callback_data="ignore"))
-        builder.row(*row)
-    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="admin_main_menu"))
+                    builder.button(text="-", callback_data="ignore")
+    
+    builder.adjust(7)
+    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="adm_main" if is_admin else "to_main"))
     return builder.as_markup()
 
 def get_admin_cancel_kb():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="❌ В главное меню", callback_data="admin_main_menu")
-    return builder.as_markup()
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ В меню", callback_data="adm_main")]])
