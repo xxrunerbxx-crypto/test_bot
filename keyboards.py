@@ -2,6 +2,8 @@ import calendar
 from datetime import datetime
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def main_menu():
     kb = [
@@ -23,7 +25,31 @@ def admin_menu():
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="to_main")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
+# Главное меню админа
+def get_admin_main_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Добавить окна", callback_data="admin_add_slots")
+    builder.button(text="🗑 Удалить окна", callback_data="admin_delete_slots")
+    builder.button(text="📢 Рассылка", callback_data="admin_broadcast")
+    builder.button(text="⚙️ Услуги", callback_data="admin_services_conf")
+    builder.adjust(2)
+    return builder.as_markup()
 
+# Клавиатура выбора даты для УДАЛЕНИЯ
+def get_admin_delete_dates_kb(dates):
+    builder = InlineKeyboardBuilder()
+    for date in dates:
+        builder.button(text=f"📅 {date}", callback_data=f"del_date_{date}")
+    builder.adjust(2)
+    # Кнопка возврата в самый низ
+    builder.row(InlineKeyboardButton(text="« Назад в меню", callback_data="admin_main_menu"))
+    return builder.as_markup()
+
+# Универсальная кнопка Отмены (для любого этапа)
+def get_admin_cancel_kb():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена / В меню", callback_data="admin_main_menu")
+    return builder.as_markup()
 def back_to_main():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад в меню", callback_data="to_main")]])
 

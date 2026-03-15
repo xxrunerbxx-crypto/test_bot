@@ -6,6 +6,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from keyboards import get_admin_main_kb, get_admin_delete_dates_kb
+import database as db
 
 import config
 from database import db
@@ -14,6 +19,54 @@ from states import AdminStates
 
 router = Router()
 
+# --- ГЛОБАЛЬНЫЙ ВЫХОД В МЕНЮ ---
+@router.callback_query(F.data == "admin_main_menu")
+async def back_to_admin_main(callback: CallbackQuery, state: FSMContext):
+    await state.clear() # Это самое важное: очищаем все старые вводы!
+    await callback.message.edit_text(
+        "👋 Вы вернулись в главное меню администратора.\nВыберите действие:",
+        reply_markup=get_admin_main_kb()
+    )
+    await callback.answer()
+
+# --- ИСПРАВЛЕННЫЙ ХЕНДЛЕР УДАЛЕНИЯ ---
+@router.callback_query(F.data == "admin_delete_slots")
+async def process_delete_slots(callback: CallbackQuery):
+    dates = await db.get_unique_dates() # Получаем даты из БД
+    
+    if not dates:
+        await callback.answer("У вас нет созданных окон для удаления", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "Выберите дату, чтобы увидеть и удалить слоты:",
+        reply_markup=get_admin_delete_dates_kb(dates)
+    )
+    await callback.answer()
+
+# --- ИСПРАВЛЕННЫЙ ХЕНДЛЕР ВЫБОРА КОНКРЕТНОЙ ДАТЫ ДЛЯ УДАЛЕНИЯ ---
+@router.callback_query(F.data.startswith("del_date_"))
+async def list_slots_for_delete(callback: CallbackQuery):
+    date_str = callback.data.replace("del_date_", "")
+    slots = await db.get_slots_by_date(date_str)
+    
+    builder = InlineKeyboardBuilder()
+    for slot in slots:
+        status = "🔴" if slot['is_booked'] else "🟢"
+        builder.button(
+            text=f"{status} {slot['time']}", 
+            callback_data=f"confirm_del_{slot['id']}"
+        )
+    builder.adjust(3)
+    # Кнопка возврата именно в меню дат удаления, либо сразу в главное
+    builder.row(InlineKeyboardButton(text="« Назад к датам", callback_data="admin_delete_slots"))
+    builder.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="admin_main_menu"))
+    
+    await callback.message.edit_text(
+        f"Слоты на {date_str}:\n🟢 - свободно, 🔴 - забронировано.\nНажмите на слот, чтобы удалить его.",
+        reply_markup=builder.as_markup()
+    )
+    
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message, state: FSMContext):
     if message.from_user.id != config.ADMIN_ID: return
