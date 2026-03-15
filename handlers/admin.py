@@ -1,93 +1,73 @@
-from aiogram import F, Router
-from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.filters import Command
-import database as db
-import keyboards as kb
-from states import AdminStates
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from config import ADMIN_ID
+from database.db import db
+from utils.states import AdminStates
+from keyboards.calendar_kb import generate_calendar
 from datetime import datetime
 
 router = Router()
 
 @router.message(Command("admin"))
-async def admin_start(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("🛠 Панель мастера:", reply_markup=kb.get_admin_main_kb())
-
-@router.callback_query(F.data == "adm_main")
-async def back_to_menu(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("🛠 Панель мастера:", reply_markup=kb.get_admin_main_kb())
-
-# --- ДОБАВЛЕНИЕ ---
-@router.callback_query(F.data == "adm_add")
-async def add_slot_date(callback: CallbackQuery, state: FSMContext):
-    now = datetime.now()
-    await state.set_state(AdminStates.adding_slot_date)
-    await callback.message.edit_text("Выберите дату:", 
-        reply_markup=await kb.generate_calendar(now.month, now.year, [], is_admin=True))
-
-@router.callback_query(AdminStates.adding_slot_date, F.data.startswith("date_"))
-async def add_slot_time(callback: CallbackQuery, state: FSMContext):
-    date = callback.data.replace("date_", "")
-    await state.update_data(chosen_date=date)
-    await state.set_state(AdminStates.adding_slot_time)
-    await callback.message.edit_text(f"Дата: {date}\nВведите время через запятую или выберите шаблон:", 
-                                     reply_markup=kb.admin_time_templates())
-
-@router.callback_query(AdminStates.adding_slot_time, F.data.startswith("tpl_"))
-async def process_template(callback: CallbackQuery, state: FSMContext):
-    times = callback.data.replace("tpl_", "").split(',')
-    data = await state.get_data()
-    for t in times:
-        await db.add_slot(data['chosen_date'], t)
-    await state.clear()
-    await callback.message.edit_text(f"✅ Добавлено: {', '.join(times)}", reply_markup=kb.get_admin_main_kb())
-
-@router.message(AdminStates.adding_slot_time)
-async def process_manual_time(message: Message, state: FSMContext):
-    times = [t.strip() for t in message.text.split(',')]
-    data = await state.get_data()
-    for t in times:
-        await db.add_slot(data['chosen_date'], t)
-    await state.clear()
-    await message.answer(f"✅ Добавлено: {', '.join(times)}", reply_markup=kb.get_admin_main_kb())
-
-# --- УДАЛЕНИЕ ---
-@router.callback_query(F.data == "adm_del")
-async def del_slots_start(callback: CallbackQuery):
-    dates = await db.get_unique_dates()
-    if not dates: return await callback.answer("Пусто")
-    await callback.message.edit_text("Выберите дату для удаления:", reply_markup=kb.get_admin_delete_dates_kb(dates))
-
-@router.callback_query(F.data.startswith("del_date_"))
-async def del_slots_list(callback: CallbackQuery):
-    date = callback.data.replace("del_date_", "")
-    slots = await db.get_slots_by_date(date)
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
+async def admin_panel(message: Message):
+    if message.from_user.id != ADMIN_ID: return
     builder = InlineKeyboardBuilder()
-    for s in slots:
-        builder.button(text=f"{'🔴' if s[2] else '🟢'} {s[1]}", callback_data=f"conf_del_{s[0]}")
-    builder.adjust(3)
-    builder.row(kb.InlineKeyboardButton(text="« Назад", callback_data="adm_del"))
-    await callback.message.edit_text(f"Слоты на {date}:", reply_markup=builder.as_markup())
+    builder.row(InlineKeyboardButton(text="📅 Управление слотами", callback_data="admin_calendar"))
+    builder.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="to_main"))
+    await message.answer("Панель администратора:", reply_markup=builder.as_markup())
 
-@router.callback_query(F.data.startswith("conf_del_"))
-async def del_slot_final(callback: CallbackQuery):
-    await db.delete_slot(int(callback.data.replace("conf_del_", "")))
-    await callback.answer("Удалено")
-    await del_slots_start(callback)
+@router.callback_query(F.data == "admin_calendar")
+async def admin_cal(callback: CallbackQuery):
+    now = datetime.now()
+    await callback.message.edit_text("Выберите дату для редактирования:", 
+                                     reply_markup=generate_calendar(now.year, now.month, is_admin=True))
 
-# --- РАССЫЛКА, УСЛУГИ, ПОРТФОЛИО ---
-@router.callback_query(F.data == "adm_msg")
-async def start_msg(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminStates.broadcasting)
-    await callback.message.edit_text("📢 Текст рассылки:", reply_markup=kb.get_admin_cancel_kb())
+@router.callback_query(F.data.startswith("admin_date_"))
+async def admin_edit_day(callback: CallbackQuery):
+    date = callback.data.split("_")[2]
+    slots = db.get_admin_slots(date)
+    
+    text = f"Дата: <b>{date}</b>\n\nТекущие слоты:\n"
+    for s_id, s_time, booked in slots:
+        status = "🔴" if booked else "🟢"
+        text += f"{status} {s_time} (ID: {s_id})\n"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⚡ Стандарт (10, 13, 16, 19)", callback_data=f"auto_{date}"))
+    builder.row(InlineKeyboardButton(text="➕ Свой слот", callback_data=f"manual_{date}"))
+    builder.row(InlineKeyboardButton(text="🗑 Очистить день", callback_data=f"clear_{date}"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data="admin_calendar"))
+    
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
-@router.callback_query(F.data == "adm_serv")
-async def adm_serv(callback: CallbackQuery):
-    await callback.message.edit_text("⚙️ Настройка услуг:", reply_markup=kb.get_admin_cancel_kb())
+@router.callback_query(F.data.startswith("auto_"))
+async def auto_fill(callback: CallbackQuery):
+    date = callback.data.split("_")[1]
+    for t in ["10:00", "13:00", "16:00", "19:00"]:
+        db.add_slot(date, t)
+    await callback.answer("Слоты добавлены!")
+    await admin_edit_day(callback)
 
-@router.callback_query(F.data == "adm_port")
-async def adm_port(callback: CallbackQuery):
-    await callback.message.edit_text("🖼 Настройка портфолио:", reply_markup=kb.get_admin_cancel_kb())
+@router.callback_query(F.data.startswith("clear_"))
+async def clear_day(callback: CallbackQuery):
+    date = callback.data.split("_")[1]
+    db.clear_day(date)
+    await callback.answer("Свободные слоты удалены")
+    await admin_edit_day(callback)
+
+@router.callback_query(F.data.startswith("manual_"))
+async def manual_slot(callback: CallbackQuery, state: FSMContext):
+    date = callback.data.split("_")[1]
+    await state.update_data(admin_date=date)
+    await callback.message.answer(f"Введите время для {date} (например, 11:30):")
+    await state.set_state(AdminStates.adding_time)
+
+@router.message(AdminStates.adding_time)
+async def save_manual_slot(message: Message, state: FSMContext):
+    data = await state.get_data()
+    db.add_slot(data['admin_date'], message.text)
+    await message.answer(f"✅ Время {message.text} добавлено на {data['admin_date']}")
+    await state.clear()
