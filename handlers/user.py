@@ -24,8 +24,12 @@ async def is_subscribed(bot: Bot, user_id: int):
 @router.callback_query(F.data == "to_main")
 async def main_menu(event, state: FSMContext = None):
     if state: await state.clear()
+    
+    # Получаем актуальную ссылку на портфолио из БД
+    portfolio_url = db.get_portfolio_link()
+    
     text = "💅 Привет! Я бот для записи на маникюр.\nВыберите действие ниже:"
-    kb = inline.main_menu()
+    kb = inline.main_menu(portfolio_url) # Передаем ссылку в клавиатуру
     
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb)
@@ -46,12 +50,7 @@ async def show_services(callback: CallbackQuery):
     builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
-@router.callback_query(F.data == "portfolio")
-async def show_portfolio(callback: CallbackQuery):
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="Смотреть портфолио", url="https://instagram.com/your_link"))
-    builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
-    await callback.message.edit_text("📸 Мои работы доступны по ссылке ниже:", reply_markup=builder.as_markup())
+# Хендлер portfolio удален, так как кнопка теперь ведет сразу на сайт
 
 @router.callback_query(F.data == "start_booking")
 async def show_calendar(callback: CallbackQuery, bot: Bot):
@@ -107,10 +106,12 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
     db.create_booking(message.from_user.id, data['slot_id'], data['name'], phone, f"{data['date']} {data['time']}", str(job_id))
     
-    await message.answer(f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
-                         parse_mode="HTML", reply_markup=inline.main_menu())
+    # Здесь тоже берем ссылку для главного меню
+    portfolio_url = db.get_portfolio_link()
     
-    # Уведомления админу и в канал
+    await message.answer(f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
+                         parse_mode="HTML", reply_markup=inline.main_menu(portfolio_url))
+    
     msg = f"🆕 <b>Новая запись!</b>\n\n👤 Клиент: {data['name']}\n📞 Тел: {phone}\n📅 Когда: {data['date']} в {data['time']}"
     await bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
     await bot.send_message(CHANNEL_ID, msg, parse_mode="HTML")
