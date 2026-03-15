@@ -98,21 +98,32 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     phone = message.text
     
+    # 1. Сохраняем в базу и планируем напоминание
     job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
-    
     await asyncio.to_thread(db.create_booking, message.from_user.id, data['slot_id'], data['name'], phone, f"{data['date']} {data['time']}", str(job_id))
     
     url = db.get_portfolio_link()
     await message.answer(f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
                          parse_mode="HTML", reply_markup=inline.main_menu(url))
     
+    # 2. Формируем текст для уведомлений
     msg = f"🆕 <b>Новая запись!</b>\n\n👤 Клиент: {data['name']}\n📞 Тел: {phone}\n📅 Когда: {data['date']} в {data['time']}"
-    await bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
-    # Отправка в канал как отчет (если CHANNEL_ID настроен)
+    
+    # 3. Уведомление админу
     try:
-        await bot.send_message(CHANNEL_ID, msg, parse_mode="HTML")
-    except:
-        pass
+        await bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка отправки админу: {e}")
+
+    # 4. Уведомление в КАНАЛ (Исправленный блок)
+    if CHANNEL_ID and CHANNEL_ID != 0:
+        try:
+            await bot.send_message(CHANNEL_ID, msg, parse_mode="HTML")
+        except Exception as e:
+            # Если уведомление не ушло, ты увидишь причину в терминале сервера
+            print(f"❌ ОШИБКА ОТПРАВКИ В КАНАЛ: {e}")
+            print(f"Проверь, что бот админ в канале и ID {CHANNEL_ID} верный.")
+    
     await state.clear()
 
 @router.callback_query(F.data == "cancel_booking")
