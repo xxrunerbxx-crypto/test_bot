@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from config import ADMIN_IDS
+from config import ADMIN_ID
 from database.db import db
 from utils.states import AdminStates, ServiceStates
 from keyboards.calendar_kb import generate_calendar
@@ -23,11 +23,7 @@ def admin_kb():
 
 @router.message(Command("admin"))
 async def admin_panel(message: Message):
-    if message.from_user.id != ADMIN_IDS: return
-    if message.from_user.id not in ADMIN_IDS:
-        # Это поможет увидеть ID в консоли
-        print(f"Доступ запрещен для ID: {message.from_user.id}") 
-        return
+    if message.from_user.id != ADMIN_ID: return
     await message.answer("🛠 <b>Панель администратора</b>", parse_mode="HTML", reply_markup=admin_kb())
 
 # --- УПРАВЛЕНИЕ ССЫЛКОЙ НА ПОРТФОЛИО ---
