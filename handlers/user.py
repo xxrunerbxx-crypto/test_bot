@@ -25,20 +25,30 @@ async def is_subscribed(bot: Bot, user_id: int):
 async def main_menu(event, state: FSMContext = None):
     if state: await state.clear()
     
-    # Получаем актуальную ссылку на портфолио из БД
-    portfolio_url = db.get_portfolio_link()
+    # ПРОВЕРКА: Получаем ссылку. Если её нет в базе, ставим заглушку
+    portfolio_url = db.get_portfolio_link() or "https://t.me/telegram"
     
     text = "💅 Привет! Я бот для записи на маникюр.\nВыберите действие ниже:"
-    kb = inline.main_menu(portfolio_url) # Передаем ссылку в клавиатуру
+    kb = inline.main_menu(portfolio_url)
     
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb)
     else:
-        await event.message.edit_text(text, reply_markup=kb)
+        try:
+            await event.message.edit_text(text, reply_markup=kb)
+        except:
+            await event.message.answer(text, reply_markup=kb)
 
 @router.callback_query(F.data == "services")
 async def show_services(callback: CallbackQuery):
-    main, add, war = db.get_services()
+    services_data = db.get_services()
+    
+    # Если админ еще не заполнил услуги, ставим текст по умолчанию
+    if not services_data:
+        main, add, war = "Не заполнено", "Не заполнено", "Не заполнено"
+    else:
+        main, add, war = services_data
+    
     text = (
         f"<b>📋 НАШИ УСЛУГИ</b>\n\n"
         f"<b>🔹 Основные:</b>\n{main}\n\n"
@@ -50,13 +60,11 @@ async def show_services(callback: CallbackQuery):
     builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
-# Хендлер portfolio удален, так как кнопка теперь ведет сразу на сайт
-
-#@router.callback_query(F.data == "start_booking")
-#async def show_calendar(callback: CallbackQuery, bot: Bot):
-    #if not await is_subscribed(bot, callback.from_user.id):
-        #return await callback.message.answer("❌ Для записи необходимо подписаться на канал", 
-                                            # reply_markup=inline.sub_check_kb(CHANNEL_LINK))
+@router.callback_query(F.data == "start_booking")
+async def show_calendar(callback: CallbackQuery, bot: Bot):
+    # ПРОВЕРКА ПОДПИСКИ (ТЕПЕРЬ ПРОСТО ПРЕДУПРЕЖДЕНИЕ, НЕ БЛОКИРУЕТ)
+    if not await is_subscribed(bot, callback.from_user.id):
+        await callback.answer("Подпишитесь на наш канал, чтобы не пропускать акции!", show_alert=False)
     
     if db.has_booking(callback.from_user.id):
         return await callback.answer("У вас уже есть активная запись!", show_alert=True)
@@ -106,9 +114,7 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
     db.create_booking(message.from_user.id, data['slot_id'], data['name'], phone, f"{data['date']} {data['time']}", str(job_id))
     
-    # Здесь тоже берем ссылку для главного меню
-    portfolio_url = db.get_portfolio_link()
-    
+    portfolio_url = db.get_portfolio_link() or "https://t.me/telegram"
     await message.answer(f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
                          parse_mode="HTML", reply_markup=inline.main_menu(portfolio_url))
     

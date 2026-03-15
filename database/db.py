@@ -30,20 +30,28 @@ class Database:
             job_id TEXT
         )""")
         
-        # Таблица текстов услуг (Прайс-лист)
+        # Таблица текстов услуг и портфолио
         self.cur.execute("""CREATE TABLE IF NOT EXISTS services (
             id INTEGER PRIMARY KEY,
             main_services TEXT,
             additional_services TEXT,
-            warranty TEXT
+            warranty TEXT,
+            portfolio_link TEXT
         )""")
         
+        # Проверка: если таблица услуг уже была создана без колонки portfolio_link, добавляем её
+        try:
+            self.cur.execute("ALTER TABLE services ADD COLUMN portfolio_link TEXT")
+        except sqlite3.OperationalError:
+            # Если колонка уже есть, sqlite выдаст ошибку, просто игнорируем её
+            pass
+
         # Создаем начальную запись для услуг, если таблица пуста
         self.cur.execute("SELECT id FROM services WHERE id = 1")
         if not self.cur.fetchone():
             self.cur.execute("""
-                INSERT INTO services (id, main_services, additional_services, warranty) 
-                VALUES (1, 'Не заполнено', 'Не заполнено', 'Не заполнено')
+                INSERT INTO services (id, main_services, additional_services, warranty, portfolio_link) 
+                VALUES (1, 'Не заполнено', 'Не заполнено', 'Не заполнено', 'https://t.me/telegram')
             """)
             
         self.conn.commit()
@@ -56,20 +64,19 @@ class Database:
         self.conn.commit()
 
     def delete_all_slots_on_date(self, date):
-        """Удалить ВШЕ слоты на конкретную дату (и свободные, и занятые)"""
+        """Удалить ВСЕ слоты на конкретную дату"""
         self.cur.execute("DELETE FROM slots WHERE date = ?", (date,))
         self.conn.commit()
 
     def add_slot(self, date, time):
         """Добавить один временной слот"""
-        # Проверка на дубликат, чтобы не добавлять одно и то же время дважды
         self.cur.execute("SELECT id FROM slots WHERE date = ? AND time = ?", (date, time))
         if not self.cur.fetchone():
             self.cur.execute("INSERT INTO slots (date, time) VALUES (?, ?)", (date, time))
             self.conn.commit()
 
     def get_admin_slots(self, date):
-        """Получить все слоты на дату для админа (и занятые, и свободные)"""
+        """Получить все слоты на дату для админа"""
         return self.cur.execute(
             "SELECT id, time, is_booked FROM slots WHERE date = ? ORDER BY time", 
             (date,)
@@ -83,7 +90,7 @@ class Database:
     # --- МЕТОДЫ ДЛЯ ПОЛЬЗОВАТЕЛЯ ---
 
     def get_slots_count_by_month(self, year_month):
-        """Подсчет свободных слотов для календаря (напр. для '2024-05')"""
+        """Подсчет свободных слотов для календаря"""
         query = "SELECT date, COUNT(id) FROM slots WHERE date LIKE ? AND is_booked = 0 GROUP BY date"
         self.cur.execute(query, (f"{year_month}%",))
         return dict(self.cur.fetchall())
@@ -96,16 +103,13 @@ class Database:
         ).fetchall()
 
     def has_booking(self, user_id):
-        """Проверка, есть ли у пользователя уже активная запись"""
+        """Проверка активной записи"""
         return self.cur.execute("SELECT id FROM bookings WHERE user_id = ?", (user_id,)).fetchone()
 
     # --- МЕТОДЫ БРОНИРОВАНИЯ ---
 
     def create_booking(self, user_id, slot_id, name, phone, date_time, job_id):
-        """Создание записи и отметка слота как занятого"""
-        # Помечаем слот как занятый
         self.cur.execute("UPDATE slots SET is_booked = 1, user_id = ? WHERE id = ?", (user_id, slot_id))
-        # Создаем запись в таблице бронирований
         self.cur.execute(
             "INSERT INTO bookings (user_id, slot_id, name, phone, date_time, job_id) VALUES (?,?,?,?,?,?)",
             (user_id, slot_id, name, phone, date_time, job_id)
@@ -113,7 +117,6 @@ class Database:
         self.conn.commit()
 
     def cancel_booking(self, user_id):
-        """Отмена записи: освобождаем слот и удаляем бронь"""
         booking = self.cur.execute(
             "SELECT slot_id, job_id FROM bookings WHERE user_id = ?", 
             (user_id,)
@@ -121,19 +124,16 @@ class Database:
         
         if booking:
             slot_id, job_id = booking
-            # Делаем слот снова свободным
             self.cur.execute("UPDATE slots SET is_booked = 0, user_id = NULL WHERE id = ?", (slot_id,))
-            # Удаляем запись о бронировании
             self.cur.execute("DELETE FROM bookings WHERE user_id = ?", (user_id,))
             self.conn.commit()
-            return job_id  # Возвращаем ID задачи напоминания для её удаления
+            return job_id
         return None
 
-    # --- МЕТОДЫ ДЛЯ УСЛУГ (ПРАЙС-ЛИСТА) ---
+    # --- МЕТОДЫ ДЛЯ УСЛУГ И ПОРТФОЛИО ---
 
     def update_services(self, column, text):
-        """Обновление текстов услуг (основные, доп, гарантия)"""
-        # Безопасная подстановка имени колонки (т.к. это внутренний метод)
+        """Обновление текстов услуг"""
         query = f"UPDATE services SET {column} = ? WHERE id = 1"
         self.cur.execute(query, (text,))
         self.conn.commit()
@@ -144,8 +144,19 @@ class Database:
             "SELECT main_services, additional_services, warranty FROM services WHERE id = 1"
         ).fetchone()
 
+    def update_portfolio(self, link):
+        """Обновление ссылки на портфолио"""
+        self.cur.execute("UPDATE services SET portfolio_link = ? WHERE id = 1", (link,))
+        self.conn.commit()
+
+    def get_portfolio_link(self):
+        """Получение ссылки на портфолио"""
+        res = self.cur.execute("SELECT portfolio_link FROM services WHERE id = 1").fetchone()
+        if res and res[0]:
+            return res[0]
+        return "https://t.me/telegram" # Ссылка по умолчанию
+
     def get_all_active_bookings(self):
-        """Получение всех записей для восстановления планировщика при перезапуске бота"""
         return self.cur.execute("SELECT user_id, date_time, job_id FROM bookings").fetchall()
 
 # Создаем экземпляр базы данных
