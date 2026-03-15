@@ -24,6 +24,10 @@ def admin_kb():
 @router.message(Command("admin"))
 async def admin_panel(message: Message):
     if message.from_user.id != ADMIN_IDS: return
+    if message.from_user.id not in ADMIN_IDS:
+        # Это поможет увидеть ID в консоли
+        print(f"Доступ запрещен для ID: {message.from_user.id}") 
+        return
     await message.answer("🛠 <b>Панель администратора</b>", parse_mode="HTML", reply_markup=admin_kb())
 
 # --- УПРАВЛЕНИЕ ССЫЛКОЙ НА ПОРТФОЛИО ---
