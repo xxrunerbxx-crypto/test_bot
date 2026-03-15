@@ -1,5 +1,4 @@
 import asyncio
-
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.filters import Command
@@ -11,20 +10,10 @@ from keyboards import inline
 from keyboards.calendar_kb import generate_calendar
 from utils.states import BookingStates
 from utils.scheduler import schedule_reminder, scheduler
-from datetime import datetime,       time
+from datetime import datetime
 
 router = Router()
 
-@router.callback_query(F.data == "services")
-async def show_services(callback: CallbackQuery):
-    # Используем asyncio.to_thread для тяжелых запросов
-    services_data = await asyncio.to_thread(db.get_services)
-    
-    if not services_data:
-        main, add, war = "Не заполнено", "Не заполнено", "Не заполнено"
-    else:
-        main, add, war = services_data
-    
 async def is_subscribed(bot: Bot, user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -32,27 +21,13 @@ async def is_subscribed(bot: Bot, user_id: int):
     except:
         return False
 
-@router.message(Command("ping"))
-async def ping_test(message: Message):
-    start = time.perf_counter()
-    msg = await message.answer("Понг!")
-    end = time.perf_counter()
-    duration = (end - start) * 1000
-    await msg.edit_text(f"🏓 Понг! Задержка: {duration:.2f} мс")
-
-
-
-
-
-
-
 @router.message(Command("start"))
 @router.callback_query(F.data == "to_main")
 async def main_menu(event, state: FSMContext = None):
     if state: await state.clear()
     
-    # ПРОВЕРКА: Получаем ссылку. Если её нет в базе, ставим заглушку
-    portfolio_url = db.get_portfolio_link() or "https://t.me/telegram"
+    # Ссылка берется из КЭША БД мгновенно
+    portfolio_url = db.get_portfolio_link()
     
     text = "💅 Привет! Я бот для записи на маникюр.\nВыберите действие ниже:"
     kb = inline.main_menu(portfolio_url)
@@ -60,27 +35,19 @@ async def main_menu(event, state: FSMContext = None):
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb)
     else:
-        try:
-            await event.message.edit_text(text, reply_markup=kb)
-        except:
-            await event.message.answer(text, reply_markup=kb)
+        await event.message.edit_text(text, reply_markup=kb)
 
 @router.callback_query(F.data == "services")
 async def show_services(callback: CallbackQuery):
+    # Берем из КЭША мгновенно
     services_data = db.get_services()
+    main, add, war = services_data if services_data else ("Не заполнено", "Не заполнено", "Не заполнено")
     
-    # Если админ еще не заполнил услуги, ставим текст по умолчанию
-    if not services_data:
-        main, add, war = "Не заполнено", "Не заполнено", "Не заполнено"
-    else:
-        main, add, war = services_data
+    text = (f"<b>📋 НАШИ УСЛУГИ</b>\n\n"
+            f"<b>🔹 Основные:</b>\n{main}\n\n"
+            f"<b>➕ Дополнительно:</b>\n{add}\n\n"
+            f"<b>🛡 Гарантия:</b>\n{war}")
     
-    text = (
-        f"<b>📋 НАШИ УСЛУГИ</b>\n\n"
-        f"<b>🔹 Основные:</b>\n{main}\n\n"
-        f"<b>➕ Дополнительно:</b>\n{add}\n\n"
-        f"<b>🛡 Гарантия:</b>\n{war}"
-    )
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="💅 Записаться", callback_data="start_booking"))
     builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
@@ -88,23 +55,29 @@ async def show_services(callback: CallbackQuery):
 
 @router.callback_query(F.data == "start_booking")
 async def show_calendar(callback: CallbackQuery, bot: Bot):
-    # ПРОВЕРКА ПОДПИСКИ (ТЕПЕРЬ ПРОСТО ПРЕДУПРЕЖДЕНИЕ, НЕ БЛОКИРУЕТ)
+    # ПРОВЕРКА ПОДПИСКИ (сетевой запрос, может занять время)
     if not await is_subscribed(bot, callback.from_user.id):
-        await callback.answer("Подпишитесь на наш канал, чтобы не пропускать акции!", show_alert=False)
+        await callback.answer("Подпишитесь на наш канал!", show_alert=False)
     
-    if db.has_booking(callback.from_user.id):
+    # Работа с БД в отдельном потоке
+    has_book = await asyncio.to_thread(db.has_booking, callback.from_user.id)
+    if has_book:
         return await callback.answer("У вас уже есть активная запись!", show_alert=True)
 
     now = datetime.now()
-    await callback.message.edit_text("📅 Выберите дату для записи:\n(Число - есть места, прочерк - всё занято)", 
-                                     reply_markup=generate_calendar(now.year, now.month, is_admin=False))
+    # Генерация календаря тоже может дергать БД, поэтому в поток (если generate_calendar обращается к db)
+    kb = await asyncio.to_thread(generate_calendar, now.year, now.month, False)
+    
+    await callback.message.edit_text("📅 Выберите дату:", reply_markup=kb)
 
 @router.callback_query(F.data.startswith("user_date_"))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     date = callback.data.split("_")[2]
     await state.update_data(date=date)
     
-    slots = db.get_available_slots(date)
+    # В ПОТОКЕ (ЧТЕНИЕ С ДИСКА)
+    slots = await asyncio.to_thread(db.get_available_slots, date)
+    
     builder = InlineKeyboardBuilder()
     for s_id, s_time in slots:
         builder.add(InlineKeyboardButton(text=s_time, callback_data=f"slot_{s_id}_{s_time}"))
@@ -120,16 +93,15 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
 async def ask_name(callback: CallbackQuery, state: FSMContext):
     data = callback.data.split("_")
     await state.update_data(slot_id=data[1], time=data[2])
-    
     builder = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Отмена", callback_data="to_main"))
-    await callback.message.edit_text("👤 Введите ваше <b>Имя и Фамилию</b>:", parse_mode="HTML", reply_markup=builder.as_markup())
+    await callback.message.edit_text("👤 Введите ваше <b>Имя и Фамилию</b>:", reply_markup=builder.as_markup())
     await state.set_state(BookingStates.entering_name)
 
 @router.message(BookingStates.entering_name)
 async def ask_phone(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
     builder = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Отмена", callback_data="to_main"))
-    await message.answer("📞 Введите ваш <b>номер телефона</b>:", parse_mode="HTML", reply_markup=builder.as_markup())
+    await message.answer("📞 Введите <b>номер телефона</b>:", reply_markup=builder.as_markup())
     await state.set_state(BookingStates.entering_phone)
 
 @router.message(BookingStates.entering_phone)
@@ -138,20 +110,22 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     phone = message.text
     
     job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
-    db.create_booking(message.from_user.id, data['slot_id'], data['name'], phone, f"{data['date']} {data['time']}", str(job_id))
     
-    portfolio_url = db.get_portfolio_link() or "https://t.me/telegram"
-    await message.answer(f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
-                         parse_mode="HTML", reply_markup=inline.main_menu(portfolio_url))
+    # ЗАПИСЬ В БД В ПОТОКЕ
+    await asyncio.to_thread(db.create_booking, message.from_user.id, data['slot_id'], data['name'], phone, f"{data['date']} {data['time']}", str(job_id))
     
-    msg = f"🆕 <b>Новая запись!</b>\n\n👤 Клиент: {data['name']}\n📞 Тел: {phone}\n📅 Когда: {data['date']} в {data['time']}"
-    await bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
-    await bot.send_message(CHANNEL_ID, msg, parse_mode="HTML")
+    url = db.get_portfolio_link()
+    await message.answer(f"✅ <b>Запись создана!</b>\n\n📅 {data['date']} в {data['time']}", reply_markup=inline.main_menu(url))
+    
+    msg = f"🆕 <b>Новая запись!</b>\n\n👤 {data['name']}\n📞 {phone}\n📅 {data['date']} в {data['time']}"
+    await bot.send_message(ADMIN_ID, msg)
+    await bot.send_message(CHANNEL_ID, msg)
     await state.clear()
 
 @router.callback_query(F.data == "cancel_booking")
 async def cancel_handler(callback: CallbackQuery):
-    job_id = db.cancel_booking(callback.from_user.id)
+    # ОТМЕНА В ПОТОКЕ
+    job_id = await asyncio.to_thread(db.cancel_booking, callback.from_user.id)
     if job_id:
         try: scheduler.remove_job(job_id)
         except: pass
