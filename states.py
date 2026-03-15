@@ -9,12 +9,13 @@ class BookingStates(StatesGroup):
 
 class AdminStates(StatesGroup):
     """Состояния для панели управления мастера"""
-    waiting_for_new_password = State() # СОЗДАНИЕ пароля (самый первый запуск)
-    waiting_for_password = State()     # ВВОД пароля (для обычного входа)
+    broadcasting = State()             # Для рассылки
     
+    adding_slots = State()             # Для добавления окон
     adding_slot_date = State()         # Выбор даты для новых окон
     adding_slot_time = State()         # Ввод времени для новых окон
     
+    editing_services = State()         # Услуги
     filling_main_services = State()    # Настройка основных услуг
     filling_add_services = State()     # Настройка доп. услуг
     filling_warranty = State()         # Настройка гарантии

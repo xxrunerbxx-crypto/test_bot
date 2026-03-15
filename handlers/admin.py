@@ -1,4 +1,3 @@
-import os
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -11,65 +10,80 @@ from states import AdminStates
 
 router = Router()
 
-# --- ВХОД В АДМИНКУ (БЕЗ ПАРОЛЯ) ---
+# ==========================================
+# 1. ВХОД В АДМИНКУ И ГЛАВНОЕ МЕНЮ
+# ==========================================
+
 @router.message(Command("admin"))
 async def admin_start(message: Message, state: FSMContext):
-    await state.clear() # Сбрасываем всё при входе
+    """Вход в админку по команде /admin"""
+    await state.clear() # Сброс любых зависших состояний
     await message.answer(
-        "👋 Добро пожаловать в панель администратора!", 
+        "🛠 **Панель управления мастером**\nВыберите нужное действие в меню ниже:",
         reply_markup=kb.get_admin_main_kb()
     )
 
-# --- ГЛОБАЛЬНАЯ НАВИГАЦИЯ (ВЫХОД В МЕНЮ) ---
 @router.callback_query(F.data == "admin_main_menu")
 async def back_to_admin_main(callback: CallbackQuery, state: FSMContext):
-    await state.clear() # Сбрасываем любые состояния
+    """Универсальная кнопка возврата в главное меню"""
+    await state.clear() # Сброс состояний (добавления окон, рассылки и т.д.)
     await callback.message.edit_text(
-        "👋 Главное меню администратора:",
+        "🛠 **Панель управления мастером**\nВыберите нужное действие в меню ниже:",
         reply_markup=kb.get_admin_main_kb()
     )
     await callback.answer()
 
-# --- ДОБАВЛЕНИЕ ОКОН ---
+
+# ==========================================
+# 2. ДОБАВЛЕНИЕ СЛОТОВ (ОКОН)
+# ==========================================
+
 @router.callback_query(F.data == "admin_add_slots")
 async def add_slots_start(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminStates.adding_slots)
-    # Используем твой генератор календаря, но с кнопкой отмены
     await callback.message.edit_text(
-        "Выберите дату в календаре или введите (ДД.ММ.ГГГГ):",
-        reply_markup=kb.get_admin_cancel_kb() 
+        "📅 **Добавление новых окон**\n\nВведите дату и время в формате:\n`ДД.ММ.ГГГГ ЧЧ:ММ, ЧЧ:ММ`"
+        "\n\nИли выберите дату в календаре (если он подключен).",
+        reply_markup=kb.get_admin_cancel_kb() # Кнопка отмены
     )
     await callback.answer()
 
-# --- УДАЛЕНИЕ ОКОН (ИСПРАВЛЕННОЕ) ---
+# Здесь должен быть ваш @router.message(AdminStates.adding_slots) для обработки текста
+# Если он у вас в другом файле, убедитесь, что он ловит состояние AdminStates.adding_slots
+
+
+# ==========================================
+# 3. УДАЛЕНИЕ СЛОТОВ (ОКОН)
+# ==========================================
+
 @router.callback_query(F.data == "admin_delete_slots")
 async def process_delete_slots(callback: CallbackQuery, state: FSMContext):
-    await state.clear() # Чтобы не "висело" ожидание ввода даты
+    await state.clear()
     dates = await db.get_unique_dates()
     
     if not dates:
-        await callback.answer("У вас нет созданных окон!", show_alert=True)
+        await callback.answer("❌ У вас пока нет созданных окон.", show_alert=True)
         return
 
     await callback.message.edit_text(
-        "Выберите дату для удаления окон:",
+        "🗑 **Удаление окон**\nВыберите дату, на которую хотите удалить время:",
         reply_markup=kb.get_admin_delete_dates_kb(dates)
     )
     await callback.answer()
 
 @router.callback_query(F.data.startswith("del_date_"))
-async def list_slots_for_delete(callback: CallbackQuery, state: FSMContext):
+async def list_slots_for_delete(callback: CallbackQuery):
     date_str = callback.data.replace("del_date_", "")
     slots = await db.get_slots_by_date(date_str)
     
     builder = InlineKeyboardBuilder()
-    for slot in slots:
-        # slot[0]=id, slot[1]=time, slot[2]=is_booked
-        status = "🔴" if slot[2] else "🟢"
+    for s in slots:
+        # s[0]-id, s[1]-time, s[2]-is_booked
+        status = "🔴" if s[2] else "🟢"
         builder.button(
-            text=f"{status} {slot[1]}", 
-            callback_data=f"confirm_del_{slot[0]}"
+            text=f"{status} {s[1]}", 
+            callback_data=f"confirm_del_{s[0]}"
         )
     
     builder.adjust(3)
@@ -77,7 +91,7 @@ async def list_slots_for_delete(callback: CallbackQuery, state: FSMContext):
     builder.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="admin_main_menu"))
     
     await callback.message.edit_text(
-        f"Удаление на {date_str}:\nНажмите на слот для удаления.",
+        f"📅 Слоты на {date_str}\n🟢 - свободно, 🔴 - занято.\n\nНажмите на время, чтобы **удалить** его:",
         reply_markup=builder.as_markup()
     )
     await callback.answer()
@@ -86,28 +100,32 @@ async def list_slots_for_delete(callback: CallbackQuery, state: FSMContext):
 async def delete_slot_action(callback: CallbackQuery):
     slot_id = int(callback.data.replace("confirm_del_", ""))
     await db.delete_slot(slot_id)
-    await callback.answer("Слот удален")
+    await callback.answer("✅ Слот удален!")
     
-    # Сразу обновляем список дат
+    # Проверяем, остались ли еще даты
     dates = await db.get_unique_dates()
     if dates:
         await callback.message.edit_text(
-            "Слот удален. Выберите дату для продолжения:",
+            "✅ Слот удален. Выберите дату для дальнейшего удаления:",
             reply_markup=kb.get_admin_delete_dates_kb(dates)
         )
     else:
         await callback.message.edit_text(
-            "Все слоты удалены.",
+            "✅ Все слоты были удалены.",
             reply_markup=kb.get_admin_main_kb()
         )
 
-# --- РАССЫЛКА ---
+
+# ==========================================
+# 4. РАССЫЛКА ПОЛЬЗОВАТЕЛЯМ
+# ==========================================
+
 @router.callback_query(F.data == "admin_broadcast")
 async def broadcast_start(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminStates.broadcasting)
     await callback.message.edit_text(
-        "Введите текст сообщения для рассылки всем пользователям:",
+        "📢 **Рассылка сообщений**\n\nВведите текст, который хотите отправить всем вашим клиентам:",
         reply_markup=kb.get_admin_cancel_kb()
     )
     await callback.answer()
@@ -115,25 +133,42 @@ async def broadcast_start(callback: CallbackQuery, state: FSMContext):
 @router.message(AdminStates.broadcasting)
 async def do_broadcast(message: Message, state: FSMContext):
     users = await db.get_all_users()
-    count = 0
-    for user_id in users:
+    success_count = 0
+    
+    for u_id in users:
         try:
-            await message.copy_to(user_id)
-            count += 1
+            await message.copy_to(u_id)
+            success_count += 1
         except:
-            pass
+            pass # Если заблокировали бота
+            
     await state.clear()
     await message.answer(
-        f"✅ Рассылка завершена! Получили: {count}", 
+        f"✅ Рассылка завершена!\nСообщение получили {success_count} чел.",
         reply_markup=kb.get_admin_main_kb()
     )
 
-# --- УСЛУГИ ---
+
+# ==========================================
+# 5. НАСТРОЙКА УСЛУГ И ПОРТФОЛИО
+# ==========================================
+
 @router.callback_query(F.data == "admin_services_conf")
 async def services_conf(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+    # Здесь в будущем можно добавить логику редактирования
     await callback.message.edit_text(
-        "⚙️ Управление услугами:",
+        "⚙️ **Настройка услуг**\n\nВ этом разделе можно изменить список услуг, цены и описание блоков (Основные, Доп, Гарантия).",
+        reply_markup=kb.get_admin_cancel_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_portfolio")
+async def portfolio_conf(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    # Здесь можно добавить логику изменения ссылки на портфолио
+    await callback.message.edit_text(
+        "📂 **Ваше портфолио**\n\nЗдесь можно настроить ссылку на ваши работы или загрузить фотографии в бота.",
         reply_markup=kb.get_admin_cancel_kb()
     )
     await callback.answer()

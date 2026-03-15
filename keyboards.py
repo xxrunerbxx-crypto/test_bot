@@ -23,13 +23,18 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
     builder.adjust(2)
     return builder.as_markup()
 
+# Универсальная кнопка "Отмена / В меню"
+def get_admin_cancel_kb():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена / В меню", callback_data="admin_main_menu")
+    return builder.as_markup()
+
 # Клавиатура выбора даты для УДАЛЕНИЯ
 def get_admin_delete_dates_kb(dates):
     builder = InlineKeyboardBuilder()
-    for date in dates:
-        builder.button(text=f"📅 {date}", callback_data=f"del_date_{date}")
+    for d in dates:
+        builder.button(text=f"📅 {d}", callback_data=f"del_date_{d}")
     builder.adjust(2)
-    # Кнопка возврата, которая сбросит всё
     builder.row(InlineKeyboardButton(text="❌ Отмена / В меню", callback_data="admin_main_menu"))
     return builder.as_markup()
 # Универсальная кнопка для возврата
