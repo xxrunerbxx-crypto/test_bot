@@ -10,6 +10,18 @@ from states import AdminStates
 
 router = Router()
 
+# Универсальный обработчик возврата, который ничего не удаляет, 
+# а просто выводит из любого состояния (FSM)
+@router.callback_query(F.data == "admin_main_menu")
+async def back_to_admin_main(callback: CallbackQuery, state: FSMContext):
+    await state.clear()  # Сбрасываем ожидание ввода, но НЕ данные в БД
+    from keyboards import get_admin_main_kb
+    await callback.message.edit_text(
+        "👋 Главное меню администратора:",
+        reply_markup=get_admin_main_kb()
+    )
+    await callback.answer()
+
 # ==========================================
 # 1. ВХОД В АДМИНКУ И ГЛАВНОЕ МЕНЮ
 # ==========================================
@@ -22,17 +34,6 @@ async def admin_start(message: Message, state: FSMContext):
         "🛠 **Панель управления мастером**\nВыберите нужное действие в меню ниже:",
         reply_markup=kb.get_admin_main_kb()
     )
-
-@router.callback_query(F.data == "admin_main_menu")
-async def back_to_admin_main(callback: CallbackQuery, state: FSMContext):
-    """Универсальная кнопка возврата в главное меню"""
-    await state.clear() # Сброс состояний (добавления окон, рассылки и т.д.)
-    await callback.message.edit_text(
-        "🛠 **Панель управления мастером**\nВыберите нужное действие в меню ниже:",
-        reply_markup=kb.get_admin_main_kb()
-    )
-    await callback.answer()
-
 
 # ==========================================
 # 2. ДОБАВЛЕНИЕ СЛОТОВ (ОКОН)

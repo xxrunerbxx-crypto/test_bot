@@ -23,12 +23,6 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
     builder.adjust(2)
     return builder.as_markup()
 
-# Универсальная кнопка "Отмена / В меню"
-def get_admin_cancel_kb():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена / В меню", callback_data="admin_main_menu")
-    return builder.as_markup()
-
 # Клавиатура выбора даты для УДАЛЕНИЯ
 def get_admin_delete_dates_kb(dates):
     builder = InlineKeyboardBuilder()
@@ -36,11 +30,6 @@ def get_admin_delete_dates_kb(dates):
         builder.button(text=f"📅 {d}", callback_data=f"del_date_{d}")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text="❌ Отмена / В меню", callback_data="admin_main_menu"))
-    return builder.as_markup()
-# Универсальная кнопка для возврата
-def get_admin_cancel_kb():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена / В меню", callback_data="admin_main_menu")
     return builder.as_markup()
 
 def back_to_main():
@@ -81,4 +70,12 @@ async def generate_calendar(month: int, year: int, available_dates: list, is_adm
                     row.append(InlineKeyboardButton(text="-", callback_data="ignore"))
         builder.row(*row)
     builder.row(InlineKeyboardButton(text="🏠 В меню", callback_data="to_main"))
+    
+    return builder.as_markup()
+
+# Универсальная кнопка "Отмена / В меню"
+def get_admin_cancel_kb():
+    builder = InlineKeyboardBuilder()
+    # Эта кнопка будет во всех подменю, чтобы всегда можно было выйти в начало
+    builder.button(text="❌ В главное меню", callback_data="admin_main_menu")
     return builder.as_markup()
