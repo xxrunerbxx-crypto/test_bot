@@ -52,11 +52,11 @@ async def show_services(callback: CallbackQuery):
 
 # Хендлер portfolio удален, так как кнопка теперь ведет сразу на сайт
 
-@router.callback_query(F.data == "start_booking")
-async def show_calendar(callback: CallbackQuery, bot: Bot):
-    if not await is_subscribed(bot, callback.from_user.id):
-        return await callback.message.answer("❌ Для записи необходимо подписаться на канал", 
-                                             reply_markup=inline.sub_check_kb(CHANNEL_LINK))
+#@router.callback_query(F.data == "start_booking")
+#async def show_calendar(callback: CallbackQuery, bot: Bot):
+    #if not await is_subscribed(bot, callback.from_user.id):
+        #return await callback.message.answer("❌ Для записи необходимо подписаться на канал", 
+                                            # reply_markup=inline.sub_check_kb(CHANNEL_LINK))
     
     if db.has_booking(callback.from_user.id):
         return await callback.answer("У вас уже есть активная запись!", show_alert=True)
