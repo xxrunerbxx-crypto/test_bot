@@ -29,10 +29,10 @@ def get_admin_delete_dates_kb(dates):
     for date in dates:
         builder.button(text=f"📅 {date}", callback_data=f"del_date_{date}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="❌ В главное меню", callback_data="admin_main_menu"))
+    # Кнопка возврата, которая сбросит всё
+    builder.row(InlineKeyboardButton(text="❌ Отмена / В меню", callback_data="admin_main_menu"))
     return builder.as_markup()
-
-# Универсальная кнопка "Отмена"
+# Универсальная кнопка для возврата
 def get_admin_cancel_kb():
     builder = InlineKeyboardBuilder()
     builder.button(text="❌ Отмена / В меню", callback_data="admin_main_menu")
