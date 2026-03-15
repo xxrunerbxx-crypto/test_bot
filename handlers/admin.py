@@ -2,13 +2,11 @@ import re
 import asyncio
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from keyboards import get_admin_main_kb, get_admin_delete_dates_kb, admin_time_templates, back_to_main
+from keyboards import get_admin_main_kb, get_admin_delete_dates_kb, admin_time_templates
 import database as db
 import config
-import keyboards as kb
 from states import AdminStates
 
 router = Router()
@@ -23,7 +21,16 @@ async def back_to_admin_main(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-# --- УДАЛЕНИЕ ОКОН ЧЕРЕЗ КАЛЕНДАРЬ (РАБОТАЕТ) ---
+# --- ОТКРЫТЫЙ ДОСТУП ДЛЯ АДМИНА ПО ID ---
+@router.message(F.text == "/admin")
+async def cmd_admin(message: Message, state: FSMContext):
+    if message.from_user.id != config.ADMIN_ID:
+        await message.answer("⛔ У вас нет доступа к этой команде.")
+        return
+    await state.clear()
+    await message.answer("🛠 Панель мастера:", reply_markup=get_admin_main_kb())
+
+# --- УДАЛЕНИЕ ОКОН ---
 @router.callback_query(F.data == "admin_delete_slots")
 async def process_delete_slots(callback: CallbackQuery):
     dates = await db.get_unique_dates()
@@ -63,41 +70,11 @@ async def confirm_delete_slot(callback: CallbackQuery):
     await callback.message.edit_text("✅ Слот удалён!", reply_markup=get_admin_main_kb())
     await callback.answer()
 
-# --- АВТОРИЗАЦИЯ АДМИНА ---
-@router.message(F.text == "/admin")
-async def cmd_admin(message: Message, state: FSMContext):
-    if message.from_user.id != config.ADMIN_ID:
-        return
-    saved_pass = await db.get_admin_password()
-    if not saved_pass:
-        await message.answer("👋 Первый запуск! Придумайте пароль:")
-        await state.set_state(AdminStates.waiting_for_new_password)
-    else:
-        await message.answer("🔐 Введите пароль администратора:")
-        await state.set_state(AdminStates.waiting_for_password)
-
-@router.message(AdminStates.waiting_for_new_password)
-async def create_pass(message: Message, state: FSMContext):
-    await db.set_admin_password(message.text)
-    await message.delete()
-    await message.answer("✅ Пароль установлен! Введите его для входа:")
-    await state.set_state(AdminStates.waiting_for_password)
-
-@router.message(AdminStates.waiting_for_password)
-async def check_pass(message: Message, state: FSMContext):
-    saved_pass = await db.get_admin_password()
-    if message.text == saved_pass:
-        await message.delete()
-        await state.clear()
-        await message.answer("🛠 Панель мастера:", reply_markup=get_admin_main_kb())
-    else:
-        await message.answer("❌ Неверно! Попробуйте снова:")
-
 # --- ДОБАВЛЕНИЕ СЛОТОВ ---
 @router.callback_query(F.data == "admin_add_slot")
 async def add_slot_start(callback: CallbackQuery, state: FSMContext):
     now = datetime.now()
-    calendar_kb = await kb.generate_calendar(now.month, now.year, [], is_admin=True)
+    calendar_kb = await generate_calendar(now.month, now.year, [], is_admin=True)
     await callback.message.edit_text("Выберите дату:", reply_markup=calendar_kb)
     await state.set_state(AdminStates.adding_slot_date)
 
@@ -153,7 +130,9 @@ async def admin_multi_t(message: Message, state: FSMContext):
     )
     await state.clear()
 
-# --- УСЛУГИ ---
+# --- ОСТАЛЬНОЕ (услуги, рассылка и т.д.) — без изменений ---
+# (оставляем как в предыдущей версии, но удаляем всё, что связано с паролем)
+
 @router.callback_query(F.data == "admin_setup_services")
 async def setup_services(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("📜 Шаг 1: Основные услуги (название - цена):")
@@ -178,7 +157,6 @@ async def step_fin(message: Message, state: FSMContext):
     await message.answer("✅ Услуги обновлены!", reply_markup=get_admin_main_kb())
     await state.clear()
 
-# --- РАССЫЛКА ---
 @router.callback_query(F.data == "admin_broadcast")
 async def broadcast_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("📢 Введите текст рассылки:")
@@ -199,7 +177,6 @@ async def broadcast_send(message: Message, state: FSMContext):
     await message.answer(f"✅ Рассылка завершена! Отправлено: {sent} пользователям", reply_markup=get_admin_main_kb())
     await state.clear()
 
-# --- ПРОСМОТР ЗАПИСЕЙ ---
 @router.callback_query(F.data == "admin_view_schedule")
 async def view_sch(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("📅 Введите дату (например, 12.01):")
@@ -220,7 +197,6 @@ async def view_res(message: Message, state: FSMContext):
     await message.answer("Выберите действие:", reply_markup=get_admin_main_kb())
     await state.clear()
 
-# --- ПОРТФОЛИО ---
 @router.callback_query(F.data == "admin_set_portfolio")
 async def set_port(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("🖼 Введите новую ссылку на портфолио:")
@@ -232,3 +208,8 @@ async def port_res(message: Message, state: FSMContext):
     await db.set_portfolio(message.text)
     await message.answer("✅ Ссылка на портфолио обновлена!", reply_markup=get_admin_main_kb())
     await state.clear()
+
+# --- Вспомогательная функция (если не импортирована) ---
+async def generate_calendar(month: int, year: int, available_dates: list, is_admin=False):
+    from keyboards import generate_calendar as gc
+    return await gc(month, year, available_dates, is_admin)
