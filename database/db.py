@@ -49,6 +49,16 @@ class Database:
         self.conn.commit()
 
     # --- МЕТОДЫ ДЛЯ УПРАВЛЕНИЯ СЛОТАМИ (АДМИН) ---
+        
+    def delete_slot_by_id(self, slot_id):
+        """Удалить конкретный слот по ID"""
+        self.cur.execute("DELETE FROM slots WHERE id = ?", (slot_id,))
+        self.conn.commit()
+
+    def delete_all_slots_on_date(self, date):
+        """Удалить ВШЕ слоты на конкретную дату (и свободные, и занятые)"""
+        self.cur.execute("DELETE FROM slots WHERE date = ?", (date,))
+        self.conn.commit()
 
     def add_slot(self, date, time):
         """Добавить один временной слот"""

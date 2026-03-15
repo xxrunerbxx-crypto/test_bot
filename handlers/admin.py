@@ -38,17 +38,64 @@ async def admin_edit_day(callback: CallbackQuery):
     slots = db.get_admin_slots(date)
     
     text = f"Дата: <b>{date}</b>\n\nТекущие слоты:\n"
+    if not slots:
+        text += "<i>Слотов нет</i>"
     for s_id, s_time, booked in slots:
-        status = "🔴" if booked else "🟢"
+        status = "🔴 (Занят)" if booked else "🟢 (Свободен)"
         text += f"{status} {s_time}\n"
     
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⚡ Стандарт (10, 13, 16, 19)", callback_data=f"auto_{date}"))
     builder.row(InlineKeyboardButton(text="➕ Свой слот", callback_data=f"manual_{date}"))
-    builder.row(InlineKeyboardButton(text="🗑 Очистить день", callback_data=f"clear_{date}"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data="admin_calendar"))
+    builder.row(InlineKeyboardButton(text="🗑 Удаление слотов", callback_data=f"clear_menu_{date}"))
+    builder.row(InlineKeyboardButton(text="⬅️ К календарю", callback_data="admin_calendar"))
+    builder.adjust(1)
     
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+# --- МЕНЮ УДАЛЕНИЯ ---
+
+@router.callback_query(F.data.startswith("clear_menu_"))
+async def admin_clear_menu(callback: CallbackQuery):
+    date = callback.data.split("_")[2]
+    slots = db.get_admin_slots(date)
+    
+    if not slots:
+        return await callback.answer("На этот день нет слотов для удаления", show_alert=True)
+    
+    builder = InlineKeyboardBuilder()
+    for s_id, s_time, booked in slots:
+        status = "🔴" if booked else "🟢"
+        # Кнопка для удаления конкретного слота
+        builder.add(InlineKeyboardButton(
+            text=f"Удалить {status} {s_time}", 
+            callback_data=f"delslot_{s_id}_{date}"
+        ))
+    
+    builder.adjust(1)
+    # Кнопка удаления ВСЕГО дня
+    builder.row(InlineKeyboardButton(text="🔥 УДАЛИТЬ ВСЕ СЛОТЫ", callback_data=f"delall_{date}"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_date_{date}"))
+    
+    await callback.message.edit_text(f"<b>Удаление слотов на {date}:</b>\nВыберите конкретный слот или удалите весь день.", 
+                                     parse_mode="HTML", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("delslot_"))
+async def admin_delete_single_slot(callback: CallbackQuery):
+    data = callback.data.split("_")
+    slot_id, date = data[1], data[2]
+    db.delete_slot_by_id(slot_id)
+    await callback.answer("Слот удален")
+    await admin_clear_menu(callback) # Возвращаемся в меню удаления
+
+@router.callback_query(F.data.startswith("delall_"))
+async def admin_delete_all_day(callback: CallbackQuery):
+    date = callback.data.split("_")[1]
+    db.delete_all_slots_on_date(date)
+    await callback.answer("Все слоты на день удалены", show_alert=True)
+    await admin_edit_day(callback) # Возвращаемся в основное меню даты
+
+# --- ОСТАЛЬНЫЕ ФУНКЦИИ (АВТО И МАНУАЛ) ---
 
 @router.callback_query(F.data.startswith("auto_"))
 async def auto_fill(callback: CallbackQuery):
@@ -56,13 +103,6 @@ async def auto_fill(callback: CallbackQuery):
     for t in ["10:00", "13:00", "16:00", "19:00"]:
         db.add_slot(date, t)
     await callback.answer("Слоты добавлены!")
-    await admin_edit_day(callback)
-
-@router.callback_query(F.data.startswith("clear_"))
-async def clear_day_handler(callback: CallbackQuery):
-    date = callback.data.split("_")[1]
-    db.clear_day(date)
-    await callback.answer("Свободные слоты удалены")
     await admin_edit_day(callback)
 
 @router.callback_query(F.data.startswith("manual_"))
@@ -79,7 +119,7 @@ async def save_manual_slot(message: Message, state: FSMContext):
     await message.answer(f"✅ Время {message.text} добавлено на {data['admin_date']}", reply_markup=admin_kb())
     await state.clear()
 
-# --- НАСТРОЙКА УСЛУГ (С ОЧИСТКОЙ СООБЩЕНИЙ) ---
+# --- НАСТРОЙКА УСЛУГ (БЕЗ ИЗМЕНЕНИЙ) ---
 
 @router.callback_query(F.data == "admin_services_start")
 async def admin_services_main(callback: CallbackQuery, state: FSMContext):
