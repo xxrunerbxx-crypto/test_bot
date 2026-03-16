@@ -30,7 +30,7 @@ def validate_phone(phone: str) -> str | None:
 async def main_menu(event, state: FSMContext = None):
     if state: await state.clear()
     portfolio_url = db.get_portfolio_link()
-    text = "💅 <b>Привет! Я бот для записи на маникюр.</b>\n\nВыберите действие ниже:"
+    text = "💅 <b>Привет! Я бот для записи на услугу.</b>\n\nВыберите действие ниже:"
     kb = inline.main_menu(portfolio_url)
     
     if isinstance(event, Message):
