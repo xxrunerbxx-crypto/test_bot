@@ -9,6 +9,17 @@ def main_menu(portfolio_link: str):
     builder.row(InlineKeyboardButton(text="❌ Отменить запись", callback_data="cancel_booking"))
     return builder.as_markup()
 
+# Клавиатура с кнопкой авто-отправки номера
+
+def phone_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Отправить номер (авто)", request_contact=True)]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
 def back_kb():
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="to_main"))
