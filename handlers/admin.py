@@ -23,6 +23,16 @@ def admin_kb():
 
 @router.message(Command("admin"))
 async def admin_panel(message: Message):
+    # ЭТА СТРОЧКА ВЫВЕДЕТ ТВОЙ ID В КОНСОЛЬ ТЕРМИНАЛА:
+    print(f"ПОПЫТКА ВХОДА В АДМИНКУ: ID пользователя {message.from_user.id}, ожидаемый ADMIN_ID: {ADMIN_ID}")
+    
+    if message.from_user.id != ADMIN_ID:
+        # Если ты не админ, бот просто проигнорирует (или ответит ошибкой)
+        return await message.answer(f"❌ Доступ запрещен. Ваш ID: {message.from_user.id}")
+        
+    await message.answer("🛠 <b>Панель администратора</b>", parse_mode="HTML", reply_markup=admin_kb())
+@router.message(Command("admin"))
+async def admin_panel(message: Message):
     if message.from_user.id != ADMIN_ID: 
         return
     await message.answer("🛠 <b>Панель администратора</b>", parse_mode="HTML", reply_markup=admin_kb())
