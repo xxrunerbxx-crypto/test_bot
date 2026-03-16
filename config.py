@@ -1,7 +1,5 @@
-cat <<'EOF' > config.py
 TOKEN = "8537675451:AAGSupoPtFY_DD2ccaRkCzPwmHwKVxF5CwA"
 ADMIN_ID = 1385446104
 CHANNEL_ID = -1002041060720
 CHANNEL_LINK = "https://t.me/+JFf2g74t-sgitA2ZmJi"
 DB_NAME = "database.db"
-EOF
