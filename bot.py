@@ -1,58 +1,47 @@
 import asyncio
 import logging
-import time  # Импортируем для замера времени
 from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import Update
 
-from config import TOKEN
+from config import TOKEN, CHANNEL_ID
 from handlers import user, admin
 from database.db import db
 from utils.scheduler import scheduler, send_reminder
 
-# =========================================================
-# ВРЕМЕННЫЙ ТЕСТОВЫЙ БЛОК (MIDDLEWARE ДЛЯ ЗАМЕРА СКОРОСТИ)
-# =========================================================
-# Этот блок будет выводить в консоль время обработки каждого действия.
-# Если захочешь отключить его, просто удали или закомментируй этот блок.
-
-async def timing_middleware(handler, event, data):
-    start_time = time.perf_counter()  # Засекаем время
-    result = await handler(event, data)  # Выполняем хендлер
-    execution_time = time.perf_counter() - start_time  # Считаем разницу
-    
-    # Выводим результат в консоль сервера
-    print(f"--- [ТЕСТ СКОРОСТИ] Событие обработано за: {execution_time:.4f} сек. ---")
-    return result
-
-# =========================================================
-
 async def restore_reminders(bot: Bot):
     """
-    Функция восстановления напоминаний из базы данных.
-    Нужна, чтобы после перезагрузки сервера бот 'вспомнил' о записях.
+    Восстановление напоминаний из базы данных.
+    Исправлено: теперь не падает, если дата в базе записана криво.
     """
     logging.info("Восстановление напоминаний из базы данных...")
     bookings = db.get_all_active_bookings()
     
     count = 0
     for user_id, date_time, job_id in bookings:
+        # Пропускаем записи без напоминаний
+        if job_id == "no_reminder":
+            continue
+            
         try:
-            appt_time = datetime.strptime(date_time, "%Y-%m-%d %H:%M")
+            # Исправляем возможную ошибку формата (заменяем дефис между датой и временем на пробел)
+            clean_dt = date_time.replace(" ", " ") # на всякий случай
+            if "-" in clean_dt and clean_dt.count("-") == 3: # если формат 2024-05-20-13:00
+                parts = clean_dt.rsplit("-", 1)
+                clean_dt = f"{parts[0]} {parts[1]}"
+
+            appt_time = datetime.strptime(clean_dt, "%Y-%m-%d %H:%M")
             reminder_time = appt_time - timedelta(hours=24)
             
-            # Если время напоминания еще в будущем
             if reminder_time > datetime.now():
-                # Если такой задачи еще нет в планировщике, добавляем
                 if not scheduler.get_job(str(job_id)):
                     scheduler.add_job(
                         send_reminder,
                         trigger='date',
                         run_date=reminder_time,
-                        args=[bot, user_id, date_time],
+                        args=[bot, user_id, clean_dt],
                         id=str(job_id)
                     )
                     count += 1
@@ -62,51 +51,38 @@ async def restore_reminders(bot: Bot):
     logging.info(f"Восстановлено напоминаний: {count}")
 
 async def main():
-    # =========================================================
-
-    # првоерка что приходят записи в канал
-    try:
-        await bot.send_message(chat_id=-1002041060720, text="🛠 Тестовое сообщение: Бот подключен к каналу!")
-        print("✅ Тест канала пройден: Сообщение отправлено!")
-    except Exception as e:
-        print(f"❌ Тест канала провален: {e}")
-   
-    # =========================================================
-
-    
-    # Настройка красивого вывода логов в консоль
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        format="%(asctime)s - %(levelname)s - %(message)s",
     )
     
-    # Создаем объект бота
-    # DefaultBotProperties позволяет не писать в каждом сообщении parse_mode="HTML"
+    # 1. Создаем объект бота
     bot = Bot(
         token=TOKEN, 
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
+    # --- ТЕСТ КАНАЛА (ТЕПЕРЬ ПРАВИЛЬНО) ---
+    try:
+        await bot.send_message(chat_id=CHANNEL_ID, text="🛠 Бот запущен и подключен к каналу!")
+        print("✅ Тест канала пройден!")
+    except Exception as e:
+        print(f"❌ Тест канала провален: {e}")
+    # --------------------------------------
+
     dp = Dispatcher()
 
-    # РЕГИСТРАЦИЯ ТЕСТОВОГО MIDDLEWARE
-    # (Подключаем нашу 'замерялку' скорости к диспетчеру)
-    dp.update.outer_middleware()(timing_middleware)
-
-    # Регистрация обработчиков (handlers)
-    dp.include_router(admin.router)  # Админку ставим первой
+    # Регистрация роутеров
+    dp.include_router(admin.router)
     dp.include_router(user.router)
 
-    # Инициализация и запуск планировщика задач (Reminders)
+    # Запуск планировщика
     scheduler.start()
     
-    # Восстанавливаем задачи из БД перед началом работы
+    # Восстанавливаем задачи
     await restore_reminders(bot)
 
-    # Удаляем все сообщения, которые пришли боту, пока он был выключен (drop_pending_updates)
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # Запуск бесконечного цикла прослушивания обновлений
     logging.info("Бот успешно запущен и готов к работе!")
     await dp.start_polling(bot)
 
@@ -114,4 +90,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Бот остановлен пользователем")
+        logging.info("Бот остановлен")
