@@ -139,7 +139,7 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
             reply_markup=inline.main_menu(portfolio_url)
         )
 
-        # 2. Оповещение админа (отдельный блок, чтобы не ломать запись клиенту)
+        # 2. Оповещение (ТОЛЬКО В КАНАЛ)
         admin_msg = (
             f"🆕 <b>НОВАЯ ЗАПИСЬ!</b>\n\n"
             f"👤 <b>Клиент:</b> {data['name']}\n"
@@ -148,11 +148,10 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
             f"📅 <b>Когда:</b> {data['date']} в {data['time']}"
         )
         try:
-            await bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML")
             if CHANNEL_ID:
                 await bot.send_message(CHANNEL_ID, admin_msg, parse_mode="HTML")
         except Exception as admin_err:
-            print(f"ОШИБКА ОПОВЕЩЕНИЯ АДМИНА: {admin_err}")
+            print(f"ОШИБКА ОПОВЕЩЕНИЯ В КАНАЛ: {admin_err}")
 
         await state.clear()
 
