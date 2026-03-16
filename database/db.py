@@ -41,8 +41,8 @@ class Database:
             main_services TEXT,
             additional_services TEXT,
             warranty TEXT,
-            portfolio_link TEXT
-            photo_id TEXT
+            portfolio_link TEXT,
+            photo_id TEXT  
         )""")
 
         # СОЗДАНИЕ ИНДЕКСОВ для моментального поиска по дате и пользователю
