@@ -15,3 +15,4 @@ class ServiceStates(StatesGroup):
     waiting_main = State()
     waiting_additional = State()
     waiting_warranty = State()
+    waiting_photo = State()  

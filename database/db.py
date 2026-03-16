@@ -33,6 +33,7 @@ class Database:
             phone TEXT,
             date_time TEXT,
             job_id TEXT
+            
         )""")
         
         self.cur.execute("""CREATE TABLE IF NOT EXISTS services (
@@ -41,6 +42,7 @@ class Database:
             additional_services TEXT,
             warranty TEXT,
             portfolio_link TEXT
+            photo_id TEXT
         )""")
 
         # СОЗДАНИЕ ИНДЕКСОВ для моментального поиска по дате и пользователю
@@ -58,10 +60,10 @@ class Database:
     def update_cache(self):
         """Загрузка тяжелых текстов из БД в оперативную память"""
         try:
-            self.cur.execute("SELECT main_services, additional_services, warranty, portfolio_link FROM services WHERE id = 1")
+            self.cur.execute("SELECT main_services, additional_services, warranty, portfolio_link, photo_id FROM services WHERE id = 1")
             res = self.cur.fetchone()
             if res:
-                self.cache["services"] = (res[0], res[1], res[2])
+                self.cache["services"] = (res[0], res[1], res[2], res[4])
                 self.cache["portfolio_link"] = res[3] if res[3] else "https://t.me/telegram"
         except Exception as e:
             logging.error(f"Ошибка обновления кэша: {e}")
