@@ -88,8 +88,8 @@ async def admin_edit_day(callback: CallbackQuery):
         text += f"{status} {s_time}\n"
     
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="⚡ Стандарт (10, 13, 16, 19)", callback_data=f"auto_{date}"))
-    builder.row(InlineKeyboardButton(text="➕ Свой слот", callback_data=f"manual_{date}"))
+    builder.row(InlineKeyboardButton(text="⚡ Стандарт (7 слотов по 1:30 с 10-19)", callback_data=f"auto_{date}"))
+    builder.row(InlineKeyboardButton(text="➕ Свой слот (индивидуальный)", callback_data=f"manual_{date}"))
     builder.row(InlineKeyboardButton(text="🗑 Удаление слотов", callback_data=f"clear_menu_{date}"))
     builder.row(InlineKeyboardButton(text="⬅️ К календарю", callback_data="admin_calendar"))
     builder.adjust(1)
@@ -124,7 +124,7 @@ async def admin_delete_all_day(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("auto_"))
 async def auto_fill(callback: CallbackQuery):
     date = callback.data.split("_")[1]
-    for t in ["10:00", "13:00", "16:00", "19:00"]:
+    for t in ["10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00"]:
         db.add_slot(date, t)
     await admin_edit_day(callback)
 
@@ -132,7 +132,7 @@ async def auto_fill(callback: CallbackQuery):
 async def manual_slot(callback: CallbackQuery, state: FSMContext):
     date = callback.data.split("_")[1]
     await state.update_data(admin_date=date)
-    await callback.message.answer(f"Введите время для {date} (в формате 15:30):")
+    await callback.message.answer(f"Введите время для {date} (в формате 15:30-16:30):")
     await state.set_state(AdminStates.adding_time)
 
 @router.message(AdminStates.adding_time)

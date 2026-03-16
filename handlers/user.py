@@ -37,8 +37,10 @@ async def main_menu(event, state: FSMContext = None):
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
-        try: await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        except: await event.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except:
+            await event.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # --- УСЛУГИ ---
 @router.callback_query(F.data == "services")
@@ -116,12 +118,10 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     user = message.from_user
     username = f"@{user.username}" if user.username else f"ID: {user.id}"
     
-    # 1. Сначала пробуем сохранить в базу (это самое важное)
+    # 1. Пробуем сохранить и создать напоминание
     try:
-        # Пробуем создать напоминание (может вернуть None, если запись на сегодня)
         job_id = schedule_reminder(bot, user.id, data['date'], data['time'])
         
-        # Сохраняем в БД
         db.create_booking(
             user.id, 
             data['slot_id'], 
@@ -130,35 +130,35 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
             f"{data['date']} {data['time']}", 
             str(job_id) if job_id else "no_reminder"
         )
-    except Exception as e:
-        print(f"КРИТИЧЕСКАЯ ОШИБКА БАЗЫ ДАННЫХ: {e}")
-        return await message.answer("❌ Ошибка при сохранении в базу. Попробуйте другое время или напишите мастеру.")
+        
+        # Подтверждение клиенту
+        portfolio_url = db.get_portfolio_link()
+        await message.answer(
+            f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
+            parse_mode="HTML", 
+            reply_markup=inline.main_menu(portfolio_url)
+        )
 
-    # 2. Если в базу сохранилось — подтверждаем пользователю
-    portfolio_url = db.get_portfolio_link()
-    await message.answer(
-        f"✅ <b>Запись успешно создана!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}", 
-        parse_mode="HTML", 
-        reply_markup=inline.main_menu(portfolio_url)
-    )
-    
-    # 3. Отдельно пробуем оповестить админа (если не выйдет — пользователь об этом не узнает)
-    admin_msg = (
-        f"🆕 <b>НОВАЯ ЗАПИСЬ!</b>\n\n"
-        f"👤 <b>Клиент:</b> {data['name']}\n"
-        f"📞 <b>Тел:</b> <code>{phone}</code>\n"
-        f"📱 <b>Юзер:</b> {username}\n"
-        f"📅 <b>Когда:</b> {data['date']} в {data['time']}"
-    )
-    
-    try:
-        await bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML")
-        if CHANNEL_ID:
-            await bot.send_message(CHANNEL_ID, admin_msg, parse_mode="HTML")
+        # 2. Оповещение админа (отдельный блок, чтобы не ломать запись клиенту)
+        admin_msg = (
+            f"🆕 <b>НОВАЯ ЗАПИСЬ!</b>\n\n"
+            f"👤 <b>Клиент:</b> {data['name']}\n"
+            f"📞 <b>Тел:</b> <code>{phone}</code>\n"
+            f"📱 <b>Юзер:</b> {username}\n"
+            f"📅 <b>Когда:</b> {data['date']} в {data['time']}"
+        )
+        try:
+            await bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML")
+            if CHANNEL_ID:
+                await bot.send_message(CHANNEL_ID, admin_msg, parse_mode="HTML")
+        except Exception as admin_err:
+            print(f"ОШИБКА ОПОВЕЩЕНИЯ АДМИНА: {admin_err}")
+
+        await state.clear()
+
     except Exception as e:
-        print(f"ОШИБКА УВЕДОМЛЕНИЯ АДМИНА: {e}\nСкорее всего, админ не нажал /start в боте.")
-    
-    await state.clear()
+        print(f"КРИТИЧЕСКАЯ ОШИБКА ПРИ ФИНАЛИЗАЦИИ: {e}")
+        await message.answer("❌ Произошла ошибка при сохранении записи. Пожалуйста, свяжитесь с мастером напрямую.")
 
 # --- ОТМЕНА ЗАПИСИ ---
 @router.callback_query(F.data == "cancel_booking")
