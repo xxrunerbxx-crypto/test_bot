@@ -1,142 +1,189 @@
 import sqlite3
 import logging
+from datetime import datetime, timedelta
 
 class Database:
     def __init__(self, db_file):
-        # check_same_thread=False позволяет работать с базой из разных потоков
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
         self.cur = self.conn.cursor()
         self.create_tables()
-        
-        # КЭШ в оперативной памяти для мгновенного доступа
-        self.cache = {
-            "services": None,
-            "portfolio_link": "https://t.me/telegram"
-        }
-        self.update_cache() # Загружаем данные в память при старте
 
     def create_tables(self):
-        """Создание таблиц и индексов для ускорения поиска"""
+        # Таблица слотов
         self.cur.execute("""CREATE TABLE IF NOT EXISTS slots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER,
             date TEXT,
             time TEXT,
             is_booked INTEGER DEFAULT 0,
             user_id INTEGER DEFAULT NULL
         )""")
         
+        # Таблица записей
         self.cur.execute("""CREATE TABLE IF NOT EXISTS bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            master_id INTEGER,
             user_id INTEGER,
             slot_id INTEGER,
             name TEXT,
             phone TEXT,
             date_time TEXT,
             job_id TEXT
-            
         )""")
         
+        # Таблица услуг и настроек мастера
         self.cur.execute("""CREATE TABLE IF NOT EXISTS services (
-            id INTEGER PRIMARY KEY,
-            main_services TEXT,
-            additional_services TEXT,
-            warranty TEXT,
-            portfolio_link TEXT,
-            photo_id TEXT  
+            owner_id INTEGER PRIMARY KEY,
+            main_services TEXT DEFAULT 'Не заполнено',
+            additional_services TEXT DEFAULT 'Не заполнено',
+            warranty TEXT DEFAULT 'Не заполнено',
+            portfolio_link TEXT DEFAULT 'https://t.me/telegram',
+            photo_id TEXT DEFAULT NULL
         )""")
 
-        # СОЗДАНИЕ ИНДЕКСОВ для моментального поиска по дате и пользователю
+        # Таблица отзывов
+        self.cur.execute("""CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            master_id INTEGER,
+            user_id INTEGER,
+            rating INTEGER,
+            date TEXT
+        )""")
+
+        # НОВАЯ ТАБЛИЦА: Информация о подписке мастеров
+        self.cur.execute("""CREATE TABLE IF NOT EXISTS masters_info (
+            master_id INTEGER PRIMARY KEY,
+            registration_date TEXT,
+            subscription_until TEXT
+        )""")
+
+        self.cur.execute("CREATE INDEX IF NOT EXISTS idx_slots_owner ON slots(owner_id)")
         self.cur.execute("CREATE INDEX IF NOT EXISTS idx_slots_date ON slots(date)")
-        self.cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id)")
+        self.cur.execute("CREATE INDEX IF NOT EXISTS idx_reviews_master ON reviews(master_id)")
+        self.conn.commit()
 
-        self.cur.execute("SELECT id FROM services WHERE id = 1")
+    # --- ЛОГИКА ПОДПИСКИ И ДОСТУПА ---
+
+    def register_master(self, master_id):
+        """Регистрирует мастера и выдает 7 дней пробного периода"""
+        self.cur.execute("SELECT master_id FROM masters_info WHERE master_id = ?", (master_id,))
         if not self.cur.fetchone():
-            self.cur.execute("""
-                INSERT INTO services (id, main_services, additional_services, warranty, portfolio_link) 
-                VALUES (1, 'Не заполнено', 'Не заполнено', 'Не заполнено', 'https://t.me/telegram')
-            """)
-        self.conn.commit()
-
-    def update_cache(self):
-        """Загрузка тяжелых текстов из БД в оперативную память"""
-        try:
-            self.cur.execute("SELECT main_services, additional_services, warranty, portfolio_link, photo_id FROM services WHERE id = 1")
-            res = self.cur.fetchone()
-            if res:
-                self.cache["services"] = (res[0], res[1], res[2], res[4])
-                self.cache["portfolio_link"] = res[3] if res[3] else "https://t.me/telegram"
-        except Exception as e:
-            logging.error(f"Ошибка обновления кэша: {e}")
-
-    # --- МЕТОДЫ С ИСПОЛЬЗОВАНИЕМ КЭША (МГНОВЕННЫЕ) ---
-
-    def get_services(self):
-        return self.cache["services"]
-
-    def get_portfolio_link(self):
-        return self.cache["portfolio_link"]
-
-    # --- МЕТОДЫ ОБНОВЛЕНИЯ (ОБНОВЛЯЮТ И БД И КЭШ) ---
-
-    def update_services(self, column, text):
-        query = f"UPDATE services SET {column} = ? WHERE id = 1"
-        self.cur.execute(query, (text,))
-        self.conn.commit()
-        self.update_cache()
-
-    def update_portfolio(self, link):
-        self.cur.execute("UPDATE services SET portfolio_link = ? WHERE id = 1", (link,))
-        self.conn.commit()
-        self.update_cache()
-
-    # --- ОСТАЛЬНЫЕ МЕТОДЫ (РАБОТАЮТ С ДИСКОМ) ---
-
-    def add_slot(self, date, time):
-        self.cur.execute("SELECT id FROM slots WHERE date = ? AND time = ?", (date, time))
-        if not self.cur.fetchone():
-            self.cur.execute("INSERT INTO slots (date, time) VALUES (?, ?)", (date, time))
+            now = datetime.now()
+            reg_date = now.strftime("%Y-%m-%d")
+            # Сразу при регистрации даем +7 дней
+            trial_end = (now + timedelta(days=7)).strftime("%Y-%m-%d")
+            self.cur.execute("INSERT INTO masters_info (master_id, registration_date, subscription_until) VALUES (?, ?, ?)", 
+                             (master_id, reg_date, trial_end))
             self.conn.commit()
 
-    def get_admin_slots(self, date):
-        return self.cur.execute("SELECT id, time, is_booked FROM slots WHERE date = ? ORDER BY time", (date,)).fetchall()
+    def set_subscription(self, master_id, days):
+        """Продлевает подписку на N дней (используется для ручной активации и оплаты)"""
+        self.register_master(master_id) # На случай, если мастера еще нет в базе подписок
+        
+        self.cur.execute("SELECT subscription_until FROM masters_info WHERE master_id = ?", (master_id,))
+        res = self.cur.fetchone()
+        
+        current_until = datetime.strptime(res[0], "%Y-%m-%d")
+        # Если старая подписка еще действует, прибавляем к ней. Если уже истекла — прибавляем к "сегодня"
+        start_date = current_until if current_until > datetime.now() else datetime.now()
+        new_until = (start_date + timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        self.cur.execute("UPDATE masters_info SET subscription_until = ? WHERE master_id = ?", (new_until, master_id))
+        self.conn.commit()
+        return new_until
 
-    def delete_slot_by_id(self, slot_id):
-        self.cur.execute("DELETE FROM slots WHERE id = ?", (slot_id,))
+    def check_master_access(self, master_id):
+        """Проверяет, есть ли у мастера доступ и сколько дней осталось"""
+        self.register_master(master_id) # Авто-регистрация при проверке
+        
+        self.cur.execute("SELECT subscription_until FROM masters_info WHERE master_id = ?", (master_id,))
+        res = self.cur.fetchone()
+        
+        until_date = datetime.strptime(res[0], "%Y-%m-%d")
+        days_left = (until_date - datetime.now()).days
+        
+        if days_left >= 0:
+            return True, str(days_left + 1) # Доступ есть
+        return False, "0" # Доступ истек
+
+    # --- МЕТОДЫ АНАЛИТИКИ ---
+
+    def get_master_stats(self, master_id):
+        total = self.cur.execute("SELECT COUNT(*) FROM bookings WHERE master_id = ?", (master_id,)).fetchone()[0]
+        active = self.cur.execute("SELECT COUNT(*) FROM slots WHERE owner_id = ? AND is_booked = 1", (master_id,)).fetchone()[0]
+        avg_rating = self.cur.execute("SELECT AVG(rating) FROM reviews WHERE master_id = ?", (master_id,)).fetchone()[0]
+        return {
+            "total": total,
+            "active": active,
+            "rating": round(avg_rating, 1) if avg_rating else "Нет оценок"
+        }
+
+    # --- РАБОТА С ОТЗЫВАМИ ---
+
+    def save_review(self, master_id, user_id, rating):
+        date_now = datetime.now().strftime("%Y-%m-%d")
+        self.cur.execute("INSERT INTO reviews (master_id, user_id, rating, date) VALUES (?, ?, ?, ?)",
+                         (master_id, user_id, rating, date_now))
         self.conn.commit()
 
-    def delete_all_slots_on_date(self, date):
-        self.cur.execute("DELETE FROM slots WHERE date = ?", (date,))
+    # --- МЕТОДЫ ДЛЯ УСЛУГ ---
+    
+    def get_services(self, owner_id):
+        self.cur.execute("SELECT main_services, additional_services, warranty, photo_id FROM services WHERE owner_id = ?", (owner_id,))
+        return self.cur.fetchone()
+
+    def get_portfolio_link(self, owner_id):
+        self.cur.execute("SELECT portfolio_link FROM services WHERE owner_id = ?", (owner_id,))
+        res = self.cur.fetchone()
+        return res[0] if res else "https://t.me/telegram"
+
+    def update_services(self, owner_id, column, text):
+        self.cur.execute(f"INSERT OR IGNORE INTO services (owner_id) VALUES (?)", (owner_id,))
+        self.cur.execute(f"UPDATE services SET {column} = ? WHERE owner_id = ?", (text, owner_id))
         self.conn.commit()
 
-    def clear_day(self, date):
-        self.cur.execute("DELETE FROM slots WHERE date = ? AND is_booked = 0", (date,))
+    def update_portfolio(self, owner_id, link):
+        self.cur.execute(f"INSERT OR IGNORE INTO services (owner_id) VALUES (?)", (owner_id,))
+        self.cur.execute("UPDATE services SET portfolio_link = ? WHERE owner_id = ?", (link, owner_id))
         self.conn.commit()
 
-    def get_slots_count_by_month(self, year_month):
-        query = "SELECT date, COUNT(id) FROM slots WHERE date LIKE ? AND is_booked = 0 GROUP BY date"
-        self.cur.execute(query, (f"{year_month}%",))
+    # --- МЕТОДЫ ДЛЯ СЛОТОВ ---
+    def add_slot(self, owner_id, date, time):
+        self.cur.execute("SELECT id FROM slots WHERE owner_id = ? AND date = ? AND time = ?", (owner_id, date, time))
+        if not self.cur.fetchone():
+            self.cur.execute("INSERT INTO slots (owner_id, date, time) VALUES (?, ?, ?)", (owner_id, date, time))
+            self.conn.commit()
+
+    def get_admin_slots(self, owner_id, date):
+        return self.cur.execute("SELECT id, time, is_booked FROM slots WHERE owner_id = ? AND date = ? ORDER BY time", (owner_id, date)).fetchall()
+
+    def delete_all_slots_on_date(self, owner_id, date):
+        self.cur.execute("DELETE FROM slots WHERE owner_id = ? AND date = ? AND is_booked = 0", (owner_id, date))
+        self.conn.commit()
+
+    def get_slots_count_by_month(self, owner_id, year_month):
+        query = "SELECT date, COUNT(id) FROM slots WHERE owner_id = ? AND date LIKE ? AND is_booked = 0 GROUP BY date"
+        self.cur.execute(query, (owner_id, f"{year_month}%"))
         return dict(self.cur.fetchall())
 
-    def get_available_slots(self, date):
-        return self.cur.execute("SELECT id, time FROM slots WHERE date = ? AND is_booked = 0 ORDER BY time", (date,)).fetchall()
+    def get_available_slots(self, owner_id, date):
+        return self.cur.execute("SELECT id, time FROM slots WHERE owner_id = ? AND date = ? AND is_booked = 0 ORDER BY time", (owner_id, date)).fetchall()
 
-    def has_booking(self, user_id):
-        return self.cur.execute("SELECT id FROM bookings WHERE user_id = ?", (user_id,)).fetchone()
-
-    def create_booking(self, user_id, slot_id, name, phone, date_time, job_id):
+    # --- БРОНИРОВАНИЕ ---
+    def create_booking(self, master_id, user_id, slot_id, name, phone, date_time, job_id):
         self.cur.execute("UPDATE slots SET is_booked = 1, user_id = ? WHERE id = ?", (user_id, slot_id))
-        self.cur.execute("INSERT INTO bookings (user_id, slot_id, name, phone, date_time, job_id) VALUES (?,?,?,?,?,?)",
-                         (user_id, slot_id, name, phone, date_time, job_id))
+        self.cur.execute("INSERT INTO bookings (master_id, user_id, slot_id, name, phone, date_time, job_id) VALUES (?,?,?,?,?,?,?)",
+                         (master_id, user_id, slot_id, name, phone, date_time, job_id))
         self.conn.commit()
 
     def cancel_booking(self, user_id):
-        booking = self.cur.execute("SELECT slot_id, job_id FROM bookings WHERE user_id = ?", (user_id,)).fetchone()
+        booking = self.cur.execute("SELECT slot_id, job_id, master_id FROM bookings WHERE user_id = ?", (user_id,)).fetchone()
         if booking:
             self.cur.execute("UPDATE slots SET is_booked = 0, user_id = NULL WHERE id = ?", (booking[0],))
             self.cur.execute("DELETE FROM bookings WHERE user_id = ?", (user_id,))
             self.conn.commit()
-            return booking[1]
-        return None
+            return booking[1], booking[2] 
+        return None, None
 
     def get_all_active_bookings(self):
         return self.cur.execute("SELECT user_id, date_time, job_id FROM bookings").fetchall()

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>Выбор времени</title>
+    <style>
+        body { font-family: sans-serif; background-color: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); text-align: center; padding: 20px; }
+        .title { font-size: 1.2em; font-weight: bold; margin-bottom: 20px; }
+        .slot-btn { 
+            background: #ff4d94; color: white; border: none; padding: 15px; 
+            margin: 5px; border-radius: 10px; width: 80%; font-size: 16px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="title">Выберите удобное время</div>
+    <div id="slots">
+        <!-- В реальном проекте тут будет список из БД через API -->
+        <button class="slot-btn" onclick="sendSlot('10:00')">10:00</button>
+        <button class="slot-btn" onclick="sendSlot('13:00')">13:00</button>
+        <button class="slot-btn" onclick="sendSlot('16:00')">16:00</button>
+    </div>
+
+    <script>
+        let tg = window.Telegram.WebApp;
+        tg.expand(); // Разворачиваем на всё окно
+
+        function sendSlot(time) {
+            // Отправляем данные боту и закрываем окно
+            tg.sendData(time); 
+        }
+    </script>
+</body>
+</html>
