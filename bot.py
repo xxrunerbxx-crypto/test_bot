@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import TOKEN, CHANNEL_ID, API_HOST, API_PORT
+from config import TOKEN, LOG_CHANNEL_ID, API_HOST, API_PORT
 from handlers import user, admin
 from database.db import db
 from utils.scheduler import scheduler, send_reminder
@@ -66,7 +66,7 @@ async def main():
     
     # --- ТЕСТ КАНАЛА (ТЕПЕРЬ ПРАВИЛЬНО) ---
     try:
-        await bot.send_message(chat_id=CHANNEL_ID, text="🛠 Бот запущен и подключен к каналу!")
+        await bot.send_message(chat_id=LOG_CHANNEL_ID, text="🛠 Бот запущен и подключен к каналу!")
         print("✅ Тест канала пройден!")
     except Exception as e:
         print(f"❌ Тест канала провален: {e}")

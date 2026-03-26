@@ -286,8 +286,19 @@
   </div>
 
   <script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (!tg) {
+      // Если открыть страницу не внутри Telegram WebView, Telegram API не появится и JS упадет.
+      const card = document.getElementById("clientCard");
+      const err = document.getElementById("clientError");
+      if (card) card.style.display = "block";
+      if (err) {
+        err.style.display = "block";
+        err.textContent = "Откройте мини-приложение внутри Telegram (не в обычном браузере).";
+      }
+    } else {
+      tg.expand();
+    }
 
     const params = new URLSearchParams(window.location.search);
     const role = params.get("role") || "client";
