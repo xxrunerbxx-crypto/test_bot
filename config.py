@@ -14,4 +14,4 @@ API_PORT = 8000
 
 # Публичный HTTPS URL для Telegram WebApp (только HTTPS!)
 # Пример: "https://abcd1234.ngrok-free.app"
-WEBAPP_BASE_URL = "https:bot-zapis.ru"
+WEBAPP_BASE_URL = "https://bot-zapis.ru"
