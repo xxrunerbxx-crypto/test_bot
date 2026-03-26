@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+import re
 
 from config import BACKUP_DIR, DB_PATH
 from database.schema import SCHEMA_SQL
@@ -94,8 +95,9 @@ class Repository:
     def set_subscription(self, master_id: int, days: int) -> str:
         self.register_master(master_id)
         row = self.execute("SELECT subscription_until FROM masters WHERE user_id = ?", (master_id,)).fetchone()
-        current_until = datetime.strptime(row["subscription_until"], "%Y-%m-%d")
-        start = current_until if current_until > datetime.now() else datetime.now()
+        current_until = datetime.strptime(row["subscription_until"], "%Y-%m-%d").date()
+        today = datetime.now().date()
+        start = current_until if current_until > today else today
         new_until = (start + timedelta(days=days)).strftime("%Y-%m-%d")
         with self.tx():
             self.execute("UPDATE masters SET subscription_until = ? WHERE user_id = ?", (new_until, master_id))
@@ -104,9 +106,21 @@ class Repository:
     def check_master_access(self, master_id: int) -> tuple[bool, str]:
         self.register_master(master_id)
         row = self.execute("SELECT subscription_until FROM masters WHERE user_id = ?", (master_id,)).fetchone()
-        until_date = datetime.strptime(row["subscription_until"], "%Y-%m-%d")
-        days_left = (until_date - datetime.now()).days
+        until_date = datetime.strptime(row["subscription_until"], "%Y-%m-%d").date()
+        days_left = (until_date - datetime.now().date()).days
         return (days_left >= 0, str(max(0, days_left + 1)))
+
+    def normalize_portfolio_link(self, raw: str) -> str:
+        value = (raw or "").strip()
+        if not value:
+            raise ValidationError("Portfolio link is empty")
+        if value.startswith("@"):
+            return f"https://t.me/{value[1:]}"
+        if re.match(r"^t\.me\/[A-Za-z0-9_]{4,}$", value):
+            return f"https://{value}"
+        if value.startswith("http://") or value.startswith("https://"):
+            return value
+        raise ValidationError("Portfolio link must be URL or @username")
 
     def get_maintenance(self) -> dict:
         enabled = self.execute("SELECT value FROM system_settings WHERE key='maintenance_enabled'").fetchone()["value"]
@@ -188,6 +202,12 @@ class Repository:
     ) -> int:
         self.upsert_user(user_id, None, None, "client")
         with self.tx():
+            active_count = self.execute(
+                "SELECT COUNT(*) as c FROM bookings WHERE user_id = ? AND status = 'active'",
+                (user_id,),
+            ).fetchone()["c"]
+            if active_count >= 2:
+                raise ValidationError("User already has maximum active bookings")
             row = self.execute(
                 "SELECT master_id, booked_by FROM slots WHERE id = ?",
                 (slot_id,),

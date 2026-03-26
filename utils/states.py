@@ -8,11 +8,14 @@ class BookingStates(StatesGroup):
 
 
 class MasterStates(StatesGroup):
+    choosing_services_mode = State()
     waiting_main = State()
     waiting_additional = State()
     waiting_warranty = State()
     waiting_photo = State()
+    waiting_price_photo = State()
     waiting_portfolio = State()
+    waiting_custom_slot = State()
 
 
 class OwnerAdminStates(StatesGroup):

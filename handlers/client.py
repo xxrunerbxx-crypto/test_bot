@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from config import LOG_CHANNEL_ID
 from database.db import SlotConflictError, ValidationError, db
 from keyboards.calendar_kb import generate_calendar
 from keyboards.inline import back_kb, main_menu
@@ -28,6 +29,10 @@ async def start(message: Message, command: CommandObject, state: FSMContext):
         await state.update_data(master_id=master_id)
         profile = db.get_master_profile(master_id)
         portfolio = profile["portfolio_link"] if profile else "https://t.me/telegram"
+        try:
+            portfolio = db.normalize_portfolio_link(portfolio)
+        except Exception:
+            portfolio = "https://t.me/telegram"
         await message.answer("💅 Выберите действие:", reply_markup=main_menu(portfolio, master_id))
         return
     await message.answer("Для записи используйте персональную ссылку мастера.")
@@ -41,6 +46,10 @@ async def to_main(callback: CallbackQuery, state: FSMContext):
         return await callback.answer("Откройте бота по ссылке мастера.", show_alert=True)
     profile = db.get_master_profile(master_id)
     portfolio = profile["portfolio_link"] if profile else "https://t.me/telegram"
+    try:
+        portfolio = db.normalize_portfolio_link(portfolio)
+    except Exception:
+        portfolio = "https://t.me/telegram"
     await callback.message.edit_text("💅 Выберите действие:", reply_markup=main_menu(portfolio, master_id))
 
 
@@ -75,14 +84,27 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
         return await callback.answer(maintenance["message"], show_alert=True)
     now = datetime.now()
     await callback.message.edit_text(
-        "📅 Выберите дату:",
+        "╔══ 💅 <b>Онлайн запись</b> ══╗\n"
+        "Выберите дату в календаре ниже.",
+        parse_mode="HTML",
         reply_markup=generate_calendar(now.year, now.month, master_id=master_id),
+    )
+
+@router.callback_query(F.data.startswith("cal_user_"))
+async def client_calendar_switch(callback: CallbackQuery):
+    _, _, master_id, year, month = callback.data.split("_")
+    await callback.message.edit_text(
+        "╔══ 💅 <b>Онлайн запись</b> ══╗\nВыберите дату в календаре ниже.",
+        parse_mode="HTML",
+        reply_markup=generate_calendar(int(year), int(month), int(master_id), is_admin=False),
     )
 
 
 @router.callback_query(F.data.startswith("user_date_"))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     date = callback.data.split("_")[2]
+    if datetime.strptime(date, "%Y-%m-%d").date() < datetime.now().date():
+        return await callback.answer("Нельзя выбрать прошедший день.", show_alert=True)
     data = await state.get_data()
     master_id = data.get("master_id")
     slots = db.get_available_slots(master_id, date)
@@ -95,7 +117,8 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
     builder.adjust(3)
     builder.button(text="⬅️ Назад", callback_data="start_booking")
     await callback.message.edit_text(
-        f"⏰ Время на {date}:",
+        f"╔══ ⏰ <b>Свободные слоты</b> ══╗\nДата: <b>{date}</b>\nВыберите удобное время:",
+        parse_mode="HTML",
         reply_markup=builder.as_markup(),
     )
     await state.set_state(BookingStates.choosing_time)
@@ -140,7 +163,7 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
             slot_at=slot_at,
         )
     except ValidationError:
-        return await message.answer("Некорректные данные. Проверьте имя/телефон.")
+        return await message.answer("❌ Некорректные данные или уже есть 2 активные записи. Проверьте имя/телефон.")
     except SlotConflictError:
         return await message.answer("Этот слот уже занят. Выберите другой.")
     except Exception:
@@ -148,14 +171,35 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
 
     profile = db.get_master_profile(int(data["master_id"]))
     portfolio = profile["portfolio_link"] if profile else "https://t.me/telegram"
+    try:
+        portfolio = db.normalize_portfolio_link(portfolio)
+    except Exception:
+        portfolio = "https://t.me/telegram"
     await message.answer(
-        f"✅ Запись подтверждена:\n📅 {data['date']}\n⏰ {data['time']}",
+        "╔══ ✅ <b>Запись подтверждена</b> ══╗\n"
+        f"📅 Дата: <b>{data['date']}</b>\n"
+        f"⏰ Время: <b>{data['time']}</b>\n\n"
+        "Можете закрывать меню 🙂",
+        parse_mode="HTML",
         reply_markup=main_menu(portfolio, int(data["master_id"])),
     )
     await bot.send_message(
         int(data["master_id"]),
         f"🆕 Новая запись:\n👤 {data.get('name','-')}\n📞 {booking_service.validate_phone(phone_raw)}\n📅 {data['date']} {data['time']}",
     )
+    try:
+        await bot.send_message(
+            LOG_CHANNEL_ID,
+            "📥 <b>Новая запись клиента</b>\n\n"
+            f"👤 Клиент: <b>{data.get('name','-')}</b>\n"
+            f"📞 Телефон: <code>{booking_service.validate_phone(phone_raw)}</code>\n"
+            f"🧑‍🔧 Мастер ID: <code>{int(data['master_id'])}</code>\n"
+            f"👤 User ID клиента: <code>{message.from_user.id}</code>\n"
+            f"📅 Дата/время: <b>{data['date']} {data['time']}</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
     await state.clear()
 
 
