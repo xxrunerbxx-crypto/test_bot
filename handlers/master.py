@@ -18,8 +18,12 @@ def master_menu(days_left: str):
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="📅 Управление слотами", callback_data="m_calendar"))
     kb.row(InlineKeyboardButton(text="📊 Моя статистика", callback_data="m_stats"))
+    kb.row(InlineKeyboardButton(text="🧾 Мини-CRM", callback_data="m_crm_clients"))
     kb.row(InlineKeyboardButton(text="⚙️ Настройки услуг", callback_data="m_services"))
     kb.row(InlineKeyboardButton(text="📸 Ссылка на портфолио", callback_data="m_portfolio"))
+    kb.row(InlineKeyboardButton(text="🎁 Реферальная система", callback_data="m_referral"))
+    kb.row(InlineKeyboardButton(text="👤 Профиль", callback_data="m_profile"))
+    kb.row(InlineKeyboardButton(text="💡/🐞 Идея или ошибка", callback_data="m_feedback_menu"))
     kb.row(InlineKeyboardButton(text=f"💎 Подписка ({days_left} дн.)", callback_data="m_subscription_info"))
     return kb.as_markup()
 
@@ -53,6 +57,9 @@ async def _render_day(message, master_id: int, date: str):
     for slot in slots:
         text += f"{'🔴' if slot['booked'] else '🟢'} {slot['time']}\n"
     kb = InlineKeyboardBuilder()
+    for slot in slots:
+        if not slot["booked"]:
+            kb.row(InlineKeyboardButton(text=f"❌ Удалить {slot['time']}", callback_data=f"m_del_{slot['id']}_{date}"))
     kb.row(InlineKeyboardButton(text="⚡ Авто (10:00-19:00)", callback_data=f"m_auto_{date}"))
     kb.row(InlineKeyboardButton(text="➕ Добавить свое время", callback_data=f"m_addslot_{date}"))
     kb.row(InlineKeyboardButton(text="🗑 Очистить свободные", callback_data=f"m_clear_{date}"))
@@ -63,8 +70,14 @@ async def _render_day(message, master_id: int, date: str):
 
 @router.message(Command("admin"))
 async def master_admin(message: Message, state: FSMContext):
+    state_data = await state.get_data()
     await state.clear()
+    was_master = db.is_master_registered(message.from_user.id)
     subscription_service.ensure_master(message.from_user.id)
+    if not was_master:
+        referrer_master_id = state_data.get("referrer_master_id")
+        if isinstance(referrer_master_id, int):
+            db.apply_referral_bonus(referrer_master_id, message.from_user.id, bonus_points=100)
     access, days_left = subscription_service.check_access(message.from_user.id)
     if not access:
         return await message.answer(
@@ -141,7 +154,7 @@ async def m_day(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("m_auto_"))
 async def m_auto(callback: CallbackQuery):
     date = callback.data.split("_")[2]
-    for t in ["10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00"]:
+    for t in ["10:00-11:00", "11:30-12:30", "13:00-14:00", "14:30-15:30", "16:00-17:00", "17:30-18:30", "19:00-20:00"]:
         db.add_slot(callback.from_user.id, f"{date} {t}")
     await _render_day(callback.message, callback.from_user.id, date)
 
@@ -152,7 +165,7 @@ async def m_addslot_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MasterStates.waiting_custom_slot)
     await state.update_data(slot_date=date)
     await callback.message.edit_text(
-        f"Введите время для {date} в формате HH:MM\nНапример: 09:00 или 18:45"
+        f"Введите слот для {date} в формате HH:MM-HH:MM\nНапример: 10:00-11:00"
     )
 
 
@@ -161,22 +174,41 @@ async def m_addslot_save(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     data = await state.get_data()
     date = data.get("slot_date")
-    parts = text.split(":")
-    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-        return await message.answer("❌ Неверный формат. Нужен HH:MM")
-    hh = int(parts[0])
-    mm = int(parts[1])
-    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
-        return await message.answer("❌ Время вне диапазона. Нужен HH:MM")
-    db.add_slot(message.from_user.id, f"{date} {hh:02d}:{mm:02d}")
+    if "-" not in text:
+        return await message.answer("❌ Неверный формат. Нужен HH:MM-HH:MM")
+    start, end = [x.strip() for x in text.split("-", 1)]
+    def _valid(t: str):
+        p = t.split(":")
+        if len(p) != 2 or not p[0].isdigit() or not p[1].isdigit():
+            return None
+        h = int(p[0]); m = int(p[1])
+        if h < 0 or h > 23 or m < 0 or m > 59:
+            return None
+        return h, m
+    st = _valid(start)
+    en = _valid(end)
+    if not st or not en:
+        return await message.answer("❌ Неверный формат. Нужен HH:MM-HH:MM")
+    if (en[0], en[1]) <= (st[0], st[1]):
+        return await message.answer("❌ Время окончания должно быть позже времени начала.")
+    db.add_slot(message.from_user.id, f"{date} {st[0]:02d}:{st[1]:02d}-{en[0]:02d}:{en[1]:02d}")
     await state.clear()
-    await message.answer(f"✅ Слот {date} {hh:02d}:{mm:02d} добавлен.\nОткройте /admin -> управление слотами.")
+    await message.answer(f"✅ Слот {date} {st[0]:02d}:{st[1]:02d}-{en[0]:02d}:{en[1]:02d} добавлен.\nОткройте /admin -> управление слотами.")
 
 
 @router.callback_query(F.data.startswith("m_clear_"))
 async def m_clear(callback: CallbackQuery):
     date = callback.data.split("_")[2]
     db.clear_free_slots_for_date(callback.from_user.id, date)
+    await _render_day(callback.message, callback.from_user.id, date)
+
+
+@router.callback_query(F.data.startswith("m_del_"))
+async def m_delete_single_slot(callback: CallbackQuery):
+    _, _, slot_id, date = callback.data.split("_", 3)
+    deleted = db.delete_free_slot_by_id(callback.from_user.id, int(slot_id))
+    if not deleted:
+        await callback.answer("Нельзя удалить: слот занят или уже удален.", show_alert=True)
     await _render_day(callback.message, callback.from_user.id, date)
 
 
@@ -267,13 +299,129 @@ async def m_portfolio_save(message: Message, state: FSMContext):
 @router.callback_query(F.data == "m_subscription_info")
 async def m_subscription_info(callback: CallbackQuery):
     _, days_left = subscription_service.check_access(callback.from_user.id)
+    ref_stats = db.get_referral_stats(callback.from_user.id)
     text = (
         "💎 <b>Подписка</b>\n\n"
         f"Осталось дней: <b>{days_left}</b>\n\n"
+        f"🏆 Бонусов: <b>{ref_stats['bonus_points']}</b>\n"
+        "Конвертация: 12 бонусов = 1 сутки продления.\n\n"
         "Для продления подписки напишите:\n"
         "<a href='https://t.me/ivan8954'>@ivan8954</a>"
     )
     kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🎁 Потратить 12 бонусов (1 сутки)", callback_data="m_redeem_bonus_1"))
     kb.row(InlineKeyboardButton(text="Написать @ivan8954", url="https://t.me/ivan8954"))
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "m_redeem_bonus_1")
+async def m_redeem_bonus_1(callback: CallbackQuery):
+    ok = db.spend_master_bonus_points(callback.from_user.id, 12)
+    if not ok:
+        return await callback.answer("Недостаточно бонусов.", show_alert=True)
+    subscription_service.activate(callback.from_user.id, 1)
+    await callback.answer("✅ Продлено на 1 сутки за 12 бонусов.", show_alert=True)
+    await m_subscription_info(callback)
+
+
+@router.callback_query(F.data == "m_referral")
+async def m_referral(callback: CallbackQuery):
+    me = await callback.bot.get_me()
+    ref_link = f"https://t.me/{me.username}?start=ref_{callback.from_user.id}"
+    stats = db.get_referral_stats(callback.from_user.id)
+    text = (
+        "🎁 <b>Реферальная система</b>\n\n"
+        "Приглашайте новых мастеров вашей ссылкой.\n"
+        "За каждого активированного мастера +100 бонусов.\n\n"
+        f"Ваши приглашения: <b>{stats['count']}</b>\n"
+        f"Бонусы по реферальной программе: <b>{stats['bonus_points']}</b>\n\n"
+        f"Ссылка:\n<code>{ref_link}</code>"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "m_profile")
+async def m_profile(callback: CallbackQuery):
+    access, days_left = subscription_service.check_access(callback.from_user.id)
+    if not access:
+        return await callback.message.edit_text("Подписка закончилась.")
+    p = db.get_master_profile_stats(callback.from_user.id)
+    text = (
+        "👤 <b>Профиль мастера</b>\n\n"
+        f"💎 Подписка: <b>{days_left} дн.</b>\n"
+        f"👥 Всего клиентов: <b>{p['total_clients']}</b>\n"
+        f"📅 Активных записей: <b>{p['active_bookings']}</b>\n"
+        f"⭐ Рейтинг: <b>{p['rating']}</b>\n"
+        f"🎁 Приглашено мастеров: <b>{p['referrals']}</b>\n"
+        f"🏆 Реферальные бонусы: <b>{p['referral_bonus_points']}</b>"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "m_feedback_menu")
+async def m_feedback_menu(callback: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💡 Предложение", callback_data="feedback_suggestion"))
+    kb.row(InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="feedback_bug"))
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+    await callback.message.edit_text("Что хотите отправить владельцу?", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "m_crm_clients")
+async def m_crm_clients(callback: CallbackQuery):
+    rows = db.list_master_clients(callback.from_user.id, limit=40)
+    if not rows:
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+        return await callback.message.edit_text("🧾 Клиентов пока нет.", reply_markup=kb.as_markup())
+    text = "🧾 <b>Клиенты (Mini-CRM)</b>\n\nВыберите клиента:"
+    kb = InlineKeyboardBuilder()
+    for row in rows:
+        label = f"{row['display']} | {row['visits']} виз."
+        kb.button(text=label[:60], callback_data=f"m_crm_{row['user_id']}")
+    kb.adjust(1)
+    kb.button(text="⬅️ Назад", callback_data="m_main")
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("m_crm_"))
+async def m_crm_card(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[-1])
+    card = db.get_client_card(callback.from_user.id, user_id)
+    p = card["profile"]
+    display = (p["first_name"] if p else None) or (p["username"] if p else None) or str(user_id)
+    note = card["note"] or "—"
+    text = (
+        "👤 <b>Карточка клиента</b>\n\n"
+        f"ID: <code>{user_id}</code>\n"
+        f"Имя: <b>{display}</b>\n"
+        f"Визитов: <b>{card['visits']}</b>\n"
+        f"Активных записей: <b>{card['active_bookings']}</b>\n\n"
+        f"Заметка:\n{note}"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="✍️ Изменить заметку", callback_data=f"m_crm_note_{user_id}"))
+    kb.row(InlineKeyboardButton(text="⬅️ К клиентам", callback_data="m_crm_clients"))
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("m_crm_note_"))
+async def m_crm_note_start(callback: CallbackQuery, state: FSMContext):
+    user_id = int(callback.data.split("_")[-1])
+    await state.set_state(MasterStates.waiting_crm_note)
+    await state.update_data(crm_user_id=user_id)
+    await callback.message.edit_text("Введите заметку для клиента одним сообщением.")
+
+
+@router.message(MasterStates.waiting_crm_note)
+async def m_crm_note_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = int(data.get("crm_user_id"))
+    db.set_client_note(message.from_user.id, user_id, message.text or "")
+    await state.clear()
+    await message.answer("✅ Заметка сохранена. Откройте Mini-CRM снова.")

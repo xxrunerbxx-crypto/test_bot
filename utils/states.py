@@ -5,6 +5,7 @@ class BookingStates(StatesGroup):
     choosing_time = State()
     entering_name = State()
     entering_phone = State()
+    waiting_feedback_text = State()
 
 
 class MasterStates(StatesGroup):
@@ -16,9 +17,11 @@ class MasterStates(StatesGroup):
     waiting_price_photo = State()
     waiting_portfolio = State()
     waiting_custom_slot = State()
+    waiting_crm_note = State()
 
 
 class OwnerAdminStates(StatesGroup):
     waiting_subscription_input = State()
+    waiting_bonus_input = State()
     waiting_broadcast_text = State()
     waiting_broadcast_confirm = State()

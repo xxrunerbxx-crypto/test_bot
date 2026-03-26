@@ -5,8 +5,11 @@ from aiogram.types import InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardBut
 def main_menu(portfolio_link: str, master_id: int):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="💅 Записаться", callback_data="start_booking"))
+    builder.row(InlineKeyboardButton(text="📅 Мои записи", callback_data="my_bookings"))
     builder.row(InlineKeyboardButton(text="📋 Услуги", callback_data="services"))
     builder.row(InlineKeyboardButton(text="📸 Портфолио", url=portfolio_link))
+    builder.row(InlineKeyboardButton(text="💡 Предложение", callback_data="feedback_suggestion"))
+    builder.row(InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="feedback_bug"))
     builder.row(InlineKeyboardButton(text="❌ Отменить мою запись", callback_data="cancel_booking"))
     builder.adjust(1)
     return builder.as_markup()

@@ -24,6 +24,14 @@ async def start(message: Message, command: CommandObject, state: FSMContext):
     await state.clear()
     db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, "client")
 
+    if command.args and command.args.startswith("ref_"):
+        ref_value = command.args.replace("ref_", "").strip()
+        if ref_value.isdigit():
+            await state.update_data(referrer_master_id=int(ref_value))
+            return await message.answer(
+                "🎁 Реферальный код принят.\nЕсли вы мастер, отправьте /admin для активации бонуса пригласившему."
+            )
+
     if command.args and command.args.isdigit():
         master_id = int(command.args)
         await state.update_data(master_id=master_id)
@@ -154,7 +162,8 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
             name=data.get("name", ""),
             phone=phone_raw,
         )
-        slot_at = f"{data['date']} {data['time']}"
+        slot_info = db.get_slot_by_id(int(data["slot_id"]))
+        slot_at = slot_info["slot_at"]
         notification_service.schedule_booking_notifications(
             bot=bot,
             booking_id=booking_id,
@@ -178,7 +187,7 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     await message.answer(
         "╔══ ✅ <b>Запись подтверждена</b> ══╗\n"
         f"📅 Дата: <b>{data['date']}</b>\n"
-        f"⏰ Время: <b>{data['time']}</b>\n\n"
+        f"⏰ Время: <b>{slot_info['label']}</b>\n\n"
         "Можете закрывать меню 🙂",
         parse_mode="HTML",
         reply_markup=main_menu(portfolio, int(data["master_id"])),
@@ -213,6 +222,69 @@ async def cancel_booking(callback: CallbackQuery):
     await callback.bot.send_message(booking["master_id"], "Клиент отменил запись.")
     await callback.answer("Запись отменена.", show_alert=True)
 
+
+@router.callback_query(F.data == "my_bookings")
+async def my_bookings(callback: CallbackQuery, state: FSMContext):
+    items = db.list_user_active_bookings(callback.from_user.id)
+    if not items:
+        return await callback.answer("У вас пока нет активных записей.", show_alert=True)
+    text = "📅 <b>Мои записи</b>\n\n"
+    builder = InlineKeyboardBuilder()
+    for item in items:
+        text += f"• #{item['id']} — {item['slot_at']}\n"
+        builder.button(text=f"❌ Отменить #{item['id']}", callback_data=f"cancel_booking_{item['id']}")
+    builder.adjust(1)
+    builder.button(text="⬅️ Назад", callback_data="to_main")
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("cancel_booking_"))
+async def cancel_booking_specific(callback: CallbackQuery):
+    booking_id = int(callback.data.split("_")[-1])
+    booking = db.cancel_booking_by_id(callback.from_user.id, booking_id)
+    if not booking:
+        return await callback.answer("Запись не найдена или уже отменена.", show_alert=True)
+    cancel_job(booking["reminder_job_id"])
+    cancel_job(booking["review_job_id"])
+    await callback.bot.send_message(booking["master_id"], f"Клиент отменил запись #{booking_id}.")
+    await callback.answer("Запись отменена.", show_alert=True)
+
+
+@router.callback_query(F.data == "feedback_suggestion")
+async def feedback_suggestion_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(BookingStates.waiting_feedback_text)
+    await state.update_data(feedback_type="suggestion")
+    await callback.message.edit_text("💡 Напишите ваше предложение одним сообщением.")
+
+
+@router.callback_query(F.data == "feedback_bug")
+async def feedback_bug_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(BookingStates.waiting_feedback_text)
+    await state.update_data(feedback_type="bug")
+    await callback.message.edit_text("🐞 Опишите ошибку одним сообщением.")
+
+
+@router.message(BookingStates.waiting_feedback_text)
+async def feedback_text_save(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    feedback_type = data.get("feedback_type", "suggestion")
+    text = (message.text or "").strip()
+    if not text:
+        return await message.answer("Сообщение не может быть пустым.")
+    role = "master" if db.is_master_registered(message.from_user.id) else "client"
+    db.create_feedback(message.from_user.id, role, feedback_type, text)
+    try:
+        kind = "Предложение" if feedback_type == "suggestion" else "Ошибка"
+        await bot.send_message(
+            LOG_CHANNEL_ID,
+            f"📝 <b>{kind}</b>\n"
+            f"От: <code>{message.from_user.id}</code> ({role})\n\n{text}",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await state.clear()
+    await message.answer("✅ Спасибо! Сообщение отправлено владельцу бота.")
 
 @router.callback_query(F.data.startswith("rate_"))
 async def rate_master(callback: CallbackQuery):
