@@ -1,6 +1,8 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 
+from config import WEBAPP_BASE_URL
+
 # Обновленное главное меню
 def main_menu(portfolio_link: str, master_id: int):
     builder = InlineKeyboardBuilder()
@@ -10,7 +12,7 @@ def main_menu(portfolio_link: str, master_id: int):
     # Но для работы Web App ссылка должна быть HTTPS
     builder.row(InlineKeyboardButton(
         text="💅 Записаться", 
-        web_app=WebAppInfo(url=f"https://your-domain.com/index.html?master_id={master_id}")
+        web_app=WebAppInfo(url=f"{WEBAPP_BASE_URL}/?role=client&master_id={master_id}")
     ))
     
     builder.row(InlineKeyboardButton(text="📋 Услуги", callback_data="services"))

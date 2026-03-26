@@ -28,6 +28,18 @@ def validate_phone(phone: str) -> str | None:
 async def main_menu(message: Message, command: CommandObject, state: FSMContext):
     await state.clear()
     args = command.args
+
+    # Логируем пользователя, который начал пользоваться ботом (/start).
+    # Это нужно для админ-панели и рассылок.
+    try:
+        db.upsert_user_on_start(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+    except Exception:
+        # Не ломаем вход в бот из-за проблем со справочником пользователей.
+        pass
     
     # Если зашли по ссылке /start 12345 (ID мастера)
     if args and args.isdigit():
@@ -93,20 +105,26 @@ async def show_services(callback: CallbackQuery, state: FSMContext):
 async def show_calendar(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     master_id = data.get('master_id')
-    
+
     # ПРОВЕРКА ПОДПИСКИ МАСТЕРА
     access, _ = db.check_master_access(master_id)
     if not access:
-        return await callback.answer("❌ Извините, запись к этому мастеру временно закрыта (истек срок подписки).", show_alert=True)
-async def show_calendar(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    master_id = data.get('master_id')
+        return await callback.answer(
+            "❌ Извините, запись к этому мастеру временно закрыта (истек срок подписки).",
+            show_alert=True,
+        )
+
+    # Блокируем запись во время техработ
+    maintenance = db.get_maintenance()
+    if maintenance.get("enabled"):
+        msg = maintenance.get("message") or "Сервис временно недоступен"
+        return await callback.answer(f"🛠 {msg}", show_alert=True)
+
     now = datetime.now()
-    
     await callback.message.edit_text(
         "📅 <b>Выберите дату для записи:</b>",
-        parse_mode="HTML", 
-        reply_markup=generate_calendar(now.year, now.month, master_id=master_id)
+        parse_mode="HTML",
+        reply_markup=generate_calendar(now.year, now.month, master_id=master_id),
     )
 
 @router.callback_query(F.data.startswith("user_date_"))
@@ -153,24 +171,34 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     if not phone:
         return await message.answer("❌ Пожалуйста, введите корректный номер телефона.")
 
+    # Блокируем запись во время техработ
+    maintenance = db.get_maintenance()
+    if maintenance.get("enabled"):
+        msg = maintenance.get("message") or "Сервис временно недоступен"
+        return await message.answer(f"🛠 {msg}")
+
     try:
-        # 1. Планируем напоминание за 24 часа
-        job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
-        
-        # 2. ПУНКТ 3: Планируем опрос о качестве (через 2-3 часа после записи)
-        schedule_feedback(bot, message.from_user.id, data['master_id'], data['date'], data['time'])
-        
-        # 3. Сохраняем бронь в БД
-        db.create_booking(
+        # 1. Атомарно резервируем слот (чтобы избежать двойного бронирования)
+        booking_id = db.create_booking(
             data['master_id'], 
             message.from_user.id, 
             data['slot_id'], 
             data['name'], 
             phone, 
             f"{data['date']} {data['time']}", 
-            str(job_id) if job_id else "no_reminder"
+            "no_reminder",
         )
-        
+
+        # 2. Планируем напоминание за 24 часа (только после успешного резервирования)
+        reminder_job_id = schedule_reminder(bot, message.from_user.id, data['date'], data['time'])
+
+        # 3. Планируем опрос о качестве (через 2-3 часа после записи)
+        schedule_feedback(bot, message.from_user.id, data['master_id'], data['date'], data['time'])
+
+        # 4. Сохраняем job_id reminder в бронь
+        if reminder_job_id:
+            db.set_booking_job_id(booking_id, str(reminder_job_id))
+
         portfolio_url = db.get_portfolio_link(data['master_id'])
         await message.answer(
             f"✅ <b>Запись успешно подтверждена!</b>\n\n📅 Дата: {data['date']}\n⏰ Время: {data['time']}\n\nБудем ждать вас! ❤️", 

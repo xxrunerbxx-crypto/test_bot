@@ -6,10 +6,12 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import TOKEN, CHANNEL_ID
+from config import TOKEN, CHANNEL_ID, API_HOST, API_PORT
 from handlers import user, admin
 from database.db import db
 from utils.scheduler import scheduler, send_reminder
+from api_server import create_app
+import uvicorn
 
 async def restore_reminders(bot: Bot):
     """
@@ -84,7 +86,27 @@ async def main():
 
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот успешно запущен и готов к работе!")
-    await dp.start_polling(bot)
+
+    # Запускаем FastAPI одновременно с polling
+    api_app = create_app(bot)
+    uvicorn_config = uvicorn.Config(
+        api_app,
+        host=API_HOST,
+        port=API_PORT,
+        log_level="info",
+    )
+    server = uvicorn.Server(uvicorn_config)
+
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    api_task = asyncio.create_task(server.serve())
+
+    done, pending = await asyncio.wait(
+        {polling_task, api_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    for task in pending:
+        task.cancel()
 
 if __name__ == "__main__":
     try:

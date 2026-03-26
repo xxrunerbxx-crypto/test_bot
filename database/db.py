@@ -57,9 +57,32 @@ class Database:
             subscription_until TEXT
         )""")
 
+        # Пользователи, которые начали пользоваться ботом (/start)
+        self.cur.execute("""CREATE TABLE IF NOT EXISTS tg_users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            started_at TEXT,
+            last_seen TEXT
+        )""")
+
+        # Режим техработ (1 строка конфигурации)
+        self.cur.execute("""CREATE TABLE IF NOT EXISTS maintenance (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled INTEGER DEFAULT 0,
+            message TEXT DEFAULT 'Сервис временно недоступен',
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+
+        # Гарантируем, что строка конфигурации всегда существует
+        self.cur.execute(
+            "INSERT OR IGNORE INTO maintenance (id, enabled, message, updated_at) VALUES (1, 0, 'Сервис временно недоступен', datetime('now','localtime'))"
+        )
+
         self.cur.execute("CREATE INDEX IF NOT EXISTS idx_slots_owner ON slots(owner_id)")
         self.cur.execute("CREATE INDEX IF NOT EXISTS idx_slots_date ON slots(date)")
         self.cur.execute("CREATE INDEX IF NOT EXISTS idx_reviews_master ON reviews(master_id)")
+        self.cur.execute("CREATE INDEX IF NOT EXISTS idx_tg_users_last_seen ON tg_users(last_seen)")
         self.conn.commit()
 
     # --- ЛОГИКА ПОДПИСКИ И ДОСТУПА ---
@@ -105,6 +128,93 @@ class Database:
         if days_left >= 0:
             return True, str(days_left + 1) # Доступ есть
         return False, "0" # Доступ истек
+
+    # --- ТЕХРАБОТЫ И ПОЛЬЗОВАТЕЛИ (админ-аналитика) ---
+
+    def upsert_user_on_start(self, user_id: int, username: str | None, first_name: str | None):
+        """
+        Запоминаем пользователей, которые начали пользоваться ботом (/start).
+        used for: админ-панель, рассылки.
+        """
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Если пользователь новый — фиксируем started_at.
+        self.cur.execute(
+            """
+            INSERT OR IGNORE INTO tg_users (user_id, username, first_name, started_at, last_seen)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, username, first_name, now, now),
+        )
+
+        # Обновляем актуальные данные и last_seen.
+        self.cur.execute(
+            """
+            UPDATE tg_users
+            SET username = ?, first_name = ?, last_seen = ?
+            WHERE user_id = ?
+            """,
+            (username, first_name, now, user_id),
+        )
+        self.conn.commit()
+
+    def get_all_user_ids(self) -> list[int]:
+        return [row[0] for row in self.cur.execute("SELECT user_id FROM tg_users").fetchall()]
+
+    def count_users(self) -> int:
+        return self.cur.execute("SELECT COUNT(*) FROM tg_users").fetchone()[0]
+
+    def list_users(self, limit: int = 20, offset: int = 0):
+        return self.cur.execute(
+            """
+            SELECT user_id, username, first_name, started_at, last_seen
+            FROM tg_users
+            ORDER BY last_seen DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+
+    def list_masters(self):
+        return self.cur.execute(
+            """
+            SELECT master_id, subscription_until
+            FROM masters_info
+            ORDER BY master_id DESC
+            """
+        ).fetchall()
+
+    def count_bookings(self) -> int:
+        return self.cur.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
+
+    def list_bookings(self, limit: int = 20, offset: int = 0):
+        return self.cur.execute(
+            """
+            SELECT id, master_id, user_id, name, phone, date_time, job_id
+            FROM bookings
+            ORDER BY date_time DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+
+    def set_maintenance(self, enabled: bool, message: str | None = None):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if message is None:
+            self.cur.execute("UPDATE maintenance SET enabled = ?, updated_at = ? WHERE id = 1", (int(enabled), now))
+        else:
+            self.cur.execute(
+                "UPDATE maintenance SET enabled = ?, message = ?, updated_at = ? WHERE id = 1",
+                (int(enabled), message, now),
+            )
+        self.conn.commit()
+
+    def get_maintenance(self) -> dict:
+        res = self.cur.execute("SELECT enabled, message, updated_at FROM maintenance WHERE id = 1").fetchone()
+        if not res:
+            return {"enabled": 0, "message": "Сервис временно недоступен", "updated_at": None}
+        enabled, message, updated_at = res
+        return {"enabled": enabled, "message": message, "updated_at": updated_at}
 
     # --- МЕТОДЫ АНАЛИТИКИ ---
 
@@ -171,21 +281,60 @@ class Database:
 
     # --- БРОНИРОВАНИЕ ---
     def create_booking(self, master_id, user_id, slot_id, name, phone, date_time, job_id):
-        self.cur.execute("UPDATE slots SET is_booked = 1, user_id = ? WHERE id = ?", (user_id, slot_id))
-        self.cur.execute("INSERT INTO bookings (master_id, user_id, slot_id, name, phone, date_time, job_id) VALUES (?,?,?,?,?,?,?)",
-                         (master_id, user_id, slot_id, name, phone, date_time, job_id))
+        """
+        Атомарно бронирует слот.
+        Бронь проходит только если слот ещё не занят.
+        Возвращает id созданной записи в bookings.
+        """
+        # Важно: захватываем только свободный слот конкретного мастера.
+        self.cur.execute(
+            """
+            UPDATE slots
+            SET is_booked = 1, user_id = ?
+            WHERE id = ? AND owner_id = ? AND is_booked = 0
+            """,
+            (user_id, slot_id, master_id),
+        )
+
+        if self.cur.rowcount != 1:
+            raise ValueError("Slot already booked or invalid slot")
+
+        self.cur.execute(
+            "INSERT INTO bookings (master_id, user_id, slot_id, name, phone, date_time, job_id) VALUES (?,?,?,?,?,?,?)",
+            (master_id, user_id, slot_id, name, phone, date_time, job_id),
+        )
+        booking_id = self.cur.lastrowid
         self.conn.commit()
+        return booking_id
 
     def cancel_booking(self, user_id):
-        booking = self.cur.execute("SELECT slot_id, job_id, master_id FROM bookings WHERE user_id = ?", (user_id,)).fetchone()
+        booking = self.cur.execute(
+            "SELECT id, slot_id, job_id, master_id FROM bookings WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
         if booking:
-            self.cur.execute("UPDATE slots SET is_booked = 0, user_id = NULL WHERE id = ?", (booking[0],))
+            booking_id, slot_id, job_id, master_id = booking
+            self.cur.execute("UPDATE slots SET is_booked = 0, user_id = NULL WHERE id = ?", (slot_id,))
             self.cur.execute("DELETE FROM bookings WHERE user_id = ?", (user_id,))
             self.conn.commit()
-            return booking[1], booking[2] 
+
+            # Отменяем reminder job по job_id (если он существовал)
+            if job_id and job_id != "no_reminder":
+                try:
+                    from utils.scheduler import cancel_reminder_job
+
+                    cancel_reminder_job(job_id)
+                except Exception:
+                    pass
+
+            return job_id, master_id
         return None, None
 
     def get_all_active_bookings(self):
         return self.cur.execute("SELECT user_id, date_time, job_id FROM bookings").fetchall()
+
+    def set_booking_job_id(self, booking_id: int, job_id: str):
+        self.cur.execute("UPDATE bookings SET job_id = ? WHERE id = ?", (job_id, booking_id))
+        self.conn.commit()
 
 db = Database("database.db")

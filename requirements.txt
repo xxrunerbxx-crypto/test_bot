@@ -1,2 +1,4 @@
 aiogram
 apscheduler
+fastapi
+uvicorn[standard]

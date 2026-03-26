@@ -8,6 +8,15 @@ from keyboards.inline import review_kb
 
 scheduler = AsyncIOScheduler()
 
+# Утилита для снятия reminder-задач по job_id
+def cancel_reminder_job(job_id: str):
+    try:
+        if scheduler.get_job(str(job_id)):
+            scheduler.remove_job(str(job_id))
+    except Exception:
+        # Если job уже исчез или не найден — это не критично
+        pass
+
 # --- ПУНКТ 3: ЛОГИКА ОТЗЫВОВ ---
 
 async def ask_review(bot: Bot, user_id: int, master_id: int):
