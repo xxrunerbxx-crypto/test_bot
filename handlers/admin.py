@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import db
-from config import ADMIN_ID, PAYMENT_TOKEN, WEBAPP_BASE_URL # Обязательно добавь PAYMENT_TOKEN в config.py
+from config import ADMIN_ID, PAYMENT_TOKEN # Обязательно добавь PAYMENT_TOKEN в config.py
 from utils.states import AdminStates, ServiceStates
 from keyboards.calendar_kb import generate_calendar
 from datetime import datetime
@@ -64,7 +64,6 @@ def admin_kb(days_left: str):
     builder.row(InlineKeyboardButton(text="📊 Моя статистика", callback_data="admin_stats"))
     builder.row(InlineKeyboardButton(text="⚙️ Настройка услуг", callback_data="admin_services_start"))
     builder.row(InlineKeyboardButton(text="📸 Ссылка на портфолио", callback_data="admin_portfolio_start"))
-    builder.row(InlineKeyboardButton(text="🖥 Mini App мастера", url=f"{WEBAPP_BASE_URL}/?role=master"))
     builder.row(InlineKeyboardButton(text=f"💎 Подписка ({days_left} дн.)", callback_data="admin_subscription"))
     builder.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="to_main"))
     builder.adjust(1)

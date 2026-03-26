@@ -1,17 +1,33 @@
 import asyncio
+import json
 import logging
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import TOKEN, LOG_CHANNEL_ID, API_HOST, API_PORT
+from config import TOKEN, LOG_CHANNEL_ID
 from handlers import user, admin
 from database.db import db
 from utils.scheduler import scheduler, send_reminder
-from api_server import create_app
-import uvicorn
+
+DEBUG_LOG_PATH = Path(__file__).resolve().parent / "debug-b1c8fb.log"
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict):
+    payload = {
+        "sessionId": "b1c8fb",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    with DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 async def restore_reminders(bot: Bot):
     """
@@ -53,6 +69,9 @@ async def restore_reminders(bot: Bot):
     logging.info(f"Восстановлено напоминаний: {count}")
 
 async def main():
+    # region agent log
+    _debug_log("pre-fix", "H1", "bot.py:main", "Bot main entered", {"phase": "startup"})
+    # endregion
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -67,8 +86,14 @@ async def main():
     # --- ТЕСТ КАНАЛА (ТЕПЕРЬ ПРАВИЛЬНО) ---
     try:
         await bot.send_message(chat_id=LOG_CHANNEL_ID, text="🛠 Бот запущен и подключен к каналу!")
+        # region agent log
+        _debug_log("pre-fix", "H2", "bot.py:main", "Channel check passed", {"channel_check": "ok"})
+        # endregion
         print("✅ Тест канала пройден!")
     except Exception as e:
+        # region agent log
+        _debug_log("pre-fix", "H2", "bot.py:main", "Channel check failed", {"error_type": type(e).__name__})
+        # endregion
         print(f"❌ Тест канала провален: {e}")
     # --------------------------------------
 
@@ -83,30 +108,18 @@ async def main():
     
     # Восстанавливаем задачи
     await restore_reminders(bot)
+    # region agent log
+    _debug_log("pre-fix", "H3", "bot.py:main", "Restore reminders completed", {"restore_status": "done"})
+    # endregion
 
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот успешно запущен и готов к работе!")
 
-    # Запускаем FastAPI одновременно с polling
-    api_app = create_app(bot)
-    uvicorn_config = uvicorn.Config(
-        api_app,
-        host=API_HOST,
-        port=API_PORT,
-        log_level="info",
-    )
-    server = uvicorn.Server(uvicorn_config)
-
-    polling_task = asyncio.create_task(dp.start_polling(bot))
-    api_task = asyncio.create_task(server.serve())
-
-    done, pending = await asyncio.wait(
-        {polling_task, api_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-
-    for task in pending:
-        task.cancel()
+    # Запускаем только Telegram polling (без Mini App API)
+    # region agent log
+    _debug_log("pre-fix", "H1", "bot.py:main", "Starting polling", {"phase": "polling"})
+    # endregion
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:

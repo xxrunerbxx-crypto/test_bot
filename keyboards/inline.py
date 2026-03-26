@@ -1,19 +1,10 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
-from config import WEBAPP_BASE_URL
-
-# Обновленное главное меню
 def main_menu(portfolio_link: str, master_id: int):
     builder = InlineKeyboardBuilder()
-    
-    # ПУНКТ 5: Кнопка Записаться через Web App
-    # ЗАМЕТКА: Если ты еще не захостил HTML-файл, замени 'web_app=...' на 'callback_data="start_booking"'
-    # Но для работы Web App ссылка должна быть HTTPS
-    builder.row(InlineKeyboardButton(
-        text="💅 Записаться", 
-        web_app=WebAppInfo(url=f"{WEBAPP_BASE_URL}/?role=client&master_id={master_id}")
-    ))
+
+    builder.row(InlineKeyboardButton(text="💅 Записаться", callback_data="start_booking"))
     
     builder.row(InlineKeyboardButton(text="📋 Услуги", callback_data="services"))
     builder.row(InlineKeyboardButton(text="📸 Портфолио", url=portfolio_link))
