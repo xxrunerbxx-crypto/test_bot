@@ -15,16 +15,31 @@ router = Router()
 
 
 def master_menu(days_left: str):
+    """Компактное главное меню мастера"""
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="📅 Управление слотами", callback_data="m_calendar"))
-    kb.row(InlineKeyboardButton(text="📊 Моя статистика", callback_data="m_stats"))
-    kb.row(InlineKeyboardButton(text="🧾 Мини-CRM", callback_data="m_crm_clients"))
-    kb.row(InlineKeyboardButton(text="⚙️ Настройки услуг", callback_data="m_services"))
-    kb.row(InlineKeyboardButton(text="📸 Ссылка на портфолио", callback_data="m_portfolio"))
-    kb.row(InlineKeyboardButton(text="🎁 Реферальная система", callback_data="m_referral"))
-    kb.row(InlineKeyboardButton(text="👤 Профиль", callback_data="m_profile"))
+    # Основные действия (2 кнопки в ряду)
+    kb.row(
+        InlineKeyboardButton(text="📅 Управление слотами", callback_data="m_calendar"),
+        InlineKeyboardButton(text="📊 Статистика", callback_data="m_stats"),
+    )
+    # Управление (2 кнопки в ряду)
+    kb.row(
+        InlineKeyboardButton(text="🧾 Mini-CRM", callback_data="m_crm_clients"),
+        InlineKeyboardButton(text="⚙️ Услуги", callback_data="m_services"),
+    )
+    # Профиль и ссылки (2 кнопки в ряду)
+    kb.row(
+        InlineKeyboardButton(text="📸 Портфолио", callback_data="m_portfolio"),
+        InlineKeyboardButton(text="👤 Профиль", callback_data="m_profile"),
+    )
+    # Бизнес (2 кнопки в ряду)
+    kb.row(
+        InlineKeyboardButton(text="🎁 Реферралы", callback_data="m_referral"),
+        InlineKeyboardButton(text="💎 Подписка", callback_data="m_subscription_info"),
+    )
+    # Обратная связь и помощь (1 кнопка)
     kb.row(InlineKeyboardButton(text="💡/🐞 Идея или ошибка", callback_data="m_feedback_menu"))
-    kb.row(InlineKeyboardButton(text=f"💎 Подписка ({days_left} дн.)", callback_data="m_subscription_info"))
+    kb.adjust(2, 2, 2, 2, 1)
     return kb.as_markup()
 
 
@@ -61,10 +76,12 @@ async def _render_day(message, master_id: int, date: str):
         if not slot["booked"]:
             kb.row(InlineKeyboardButton(text=f"❌ Удалить {slot['time']}", callback_data=f"m_del_{slot['id']}_{date}"))
     kb.row(InlineKeyboardButton(text="⚡ Авто (10:00-19:00)", callback_data=f"m_auto_{date}"))
-    kb.row(InlineKeyboardButton(text="➕ Добавить свое время", callback_data=f"m_addslot_{date}"))
+    kb.row(InlineKeyboardButton(text="➕ Добавить время", callback_data=f"m_addslot_{date}"))
     kb.row(InlineKeyboardButton(text="🗑 Очистить свободные", callback_data=f"m_clear_{date}"))
-    kb.row(InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data="m_calendar"))
-    kb.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="m_main"))
+    kb.row(
+        InlineKeyboardButton(text="⬅️ К календарю", callback_data="m_calendar"),
+        InlineKeyboardButton(text="🏠 В меню", callback_data="m_main"),
+    )
     await message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
 
 
@@ -193,7 +210,13 @@ async def m_addslot_save(message: Message, state: FSMContext):
         return await message.answer("❌ Время окончания должно быть позже времени начала.")
     db.add_slot(message.from_user.id, f"{date} {st[0]:02d}:{st[1]:02d}-{en[0]:02d}:{en[1]:02d}")
     await state.clear()
-    await message.answer(f"✅ Слот {date} {st[0]:02d}:{st[1]:02d}-{en[0]:02d}:{en[1]:02d} добавлен.\nОткройте /admin -> управление слотами.")
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🔄 Добавить еще", callback_data=f"m_addslot_{date}"))
+    kb.row(InlineKeyboardButton(text="📅 Вернуться к дате", callback_data="m_calendar"))
+    await message.answer(
+        f"✅ Слот {date} {st[0]:02d}:{st[1]:02d}-{en[0]:02d}:{en[1]:02d} добавлен.",
+        reply_markup=kb.as_markup()
+    )
 
 
 @router.callback_query(F.data.startswith("m_clear_"))
@@ -233,7 +256,9 @@ async def m_services_photo_mode(callback: CallbackQuery, state: FSMContext):
 async def m_services_price_photo(message: Message, state: FSMContext):
     db.update_master_profile(message.from_user.id, "photo_id", message.photo[-1].file_id)
     await state.clear()
-    await message.answer("✅ Фото прайса сохранено.")
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🏠 В меню", callback_data="m_main"))
+    await message.answer("✅ Фото прайса сохранено.", reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data == "m_services_manual_mode")
@@ -267,13 +292,17 @@ async def m_services_4(message: Message, state: FSMContext):
 async def m_services_photo(message: Message, state: FSMContext):
     db.update_master_profile(message.from_user.id, "photo_id", message.photo[-1].file_id)
     await state.clear()
-    await message.answer("✅ Профиль услуг обновлен.")
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🏠 В меню", callback_data="m_main"))
+    await message.answer("✅ Профиль услуг обновлен.", reply_markup=kb.as_markup())
 
 
 @router.message(Command("skip"), MasterStates.waiting_photo)
 async def m_skip_photo(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("✅ Профиль услуг обновлен без фото.")
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🏠 В меню", callback_data="m_main"))
+    await message.answer("✅ Профиль услуг обновлен без фото.", reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data == "m_portfolio")
@@ -293,7 +322,9 @@ async def m_portfolio_save(message: Message, state: FSMContext):
         return await message.answer("❌ Неверный формат. Пример: https://t.me/username или @username")
     db.update_master_profile(message.from_user.id, "portfolio_link", normalized)
     await state.clear()
-    await message.answer("✅ Ссылка сохранена.")
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🏠 В меню", callback_data="m_main"))
+    await message.answer("✅ Ссылка сохранена.", reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data == "m_subscription_info")
@@ -424,4 +455,6 @@ async def m_crm_note_save(message: Message, state: FSMContext):
     user_id = int(data.get("crm_user_id"))
     db.set_client_note(message.from_user.id, user_id, message.text or "")
     await state.clear()
-    await message.answer("✅ Заметка сохранена. Откройте Mini-CRM снова.")
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🏠 В меню", callback_data="m_main"))
+    await message.answer("✅ Заметка сохранена.", reply_markup=kb.as_markup())
