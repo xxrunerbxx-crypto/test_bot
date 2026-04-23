@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import LOG_CHANNEL_ID
 from database.db import SlotConflictError, ValidationError, db
 from keyboards.calendar_kb import generate_calendar
-from keyboards.inline import back_kb, main_menu
+from keyboards.inline import back_kb, main_menu, error_back_kb
 from services.booking_service import booking_service
 from services.notification_service import notification_service
 from services.subscription_service import subscription_service
@@ -123,7 +123,7 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
     for slot in slots:
         builder.button(text=slot["time"], callback_data=f"slot_{slot['id']}_{slot['time']}")
     builder.adjust(3)
-    builder.button(text="⬅️ Назад", callback_data="start_booking")
+    builder.button(text="⬅️ Выбрать другую дату", callback_data="start_booking")
     await callback.message.edit_text(
         f"╔══ ⏰ <b>Свободные слоты</b> ══╗\nДата: <b>{date}</b>\nВыберите удобное время:",
         parse_mode="HTML",
@@ -142,7 +142,10 @@ async def ask_name(callback: CallbackQuery, state: FSMContext):
 
 @router.message(BookingStates.entering_name)
 async def ask_phone(message: Message, state: FSMContext):
-    await state.update_data(name=message.text or "")
+    name = (message.text or "").strip()
+    if not name or len(name) < 2:
+        return await message.answer("❌ Пожалуйста, введите корректное имя и фамилию.")
+    await state.update_data(name=name)
     await state.set_state(BookingStates.entering_phone)
     await message.answer("Введите номер телефона или отправьте контакт.")
 
@@ -151,9 +154,16 @@ async def ask_phone(message: Message, state: FSMContext):
 async def finish_booking(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     phone_raw = message.contact.phone_number if message.contact else (message.text or "")
+    
+    # Валидация телефона
+    if not phone_raw or len(phone_raw) < 5:
+        return await message.answer("❌ Пожалуйста, введите корректный номер телефона.")
+    
     maintenance = db.get_maintenance()
     if maintenance["enabled"]:
-        return await message.answer(maintenance["message"])
+        kb = error_back_kb()
+        return await message.answer(maintenance["message"], reply_markup=kb)
+    
     try:
         booking_id = booking_service.create_booking(
             master_id=int(data["master_id"]),
@@ -171,12 +181,41 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
             master_id=int(data["master_id"]),
             slot_at=slot_at,
         )
-    except ValidationError:
-        return await message.answer("❌ Некорректные данные или уже есть 2 активные записи. Проверьте имя/телефон.")
+    except ValidationError as e:
+        kb = error_back_kb()
+        return await message.answer(
+            "❌ Некорректные данные или уже есть 2 активные записи.\n\n"
+            "Проверьте имя и телефон. Попробуйте позже.",
+            reply_markup=kb
+        )
     except SlotConflictError:
-        return await message.answer("Этот слот уже занят. Выберите другой.")
-    except Exception:
-        return await message.answer("Не удалось оформить запись. Попробуйте позже.")
+        # Позволяем клиенту выбрать другой слот
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="🔄 Выбрать другой слот", callback_data="start_booking"))
+        builder.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="to_main"))
+        return await message.answer(
+            "❌ Этот слот уже занят 😞\n\nПожалуйста, выберите другой слот.",
+            reply_markup=builder.as_markup()
+        )
+    except Exception as e:
+        # Логируем ошибку
+        try:
+            await bot.send_message(
+                LOG_CHANNEL_ID,
+                f"⚠️ <b>Ошибка при создании записи</b>\n\n"
+                f"User ID: <code>{message.from_user.id}</code>\n"
+                f"Ошибка: {str(e)}",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        
+        kb = error_back_kb()
+        return await message.answer(
+            "❌ Не удалось оформить запись 😞\n\n"
+            "Пожалуйста, попробуйте позже или свяжитесь с мастером.",
+            reply_markup=kb
+        )
 
     profile = db.get_master_profile(int(data["master_id"]))
     portfolio = profile["portfolio_link"] if profile else "https://t.me/telegram"
@@ -184,6 +223,7 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
         portfolio = db.normalize_portfolio_link(portfolio)
     except Exception:
         portfolio = "https://t.me/telegram"
+    
     await message.answer(
         "╔══ ✅ <b>Запись подтверждена</b> ══╗\n"
         f"📅 Дата: <b>{data['date']}</b>\n"
@@ -213,41 +253,94 @@ async def finish_booking(message: Message, state: FSMContext, bot: Bot):
 
 
 @router.callback_query(F.data == "cancel_booking")
-async def cancel_booking(callback: CallbackQuery):
+async def cancel_booking(callback: CallbackQuery, state: FSMContext):
     booking = booking_service.cancel_booking(callback.from_user.id)
     if not booking:
-        return await callback.answer("Активной записи нет.", show_alert=True)
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="to_main"))
+        await callback.message.edit_text(
+            "❌ У вас нет активных записей для отмены.",
+            reply_markup=builder.as_markup()
+        )
+        return
+    
     cancel_job(booking["reminder_job_id"])
     cancel_job(booking["review_job_id"])
     await callback.bot.send_message(booking["master_id"], "Клиент отменил запись.")
-    await callback.answer("Запись отменена.", show_alert=True)
+    
+    # Показываем главное меню с сообщением об успешной отмене
+    data = await state.get_data()
+    master_id = data.get("master_id")
+    if master_id:
+        profile = db.get_master_profile(master_id)
+        portfolio = profile["portfolio_link"] if profile else "https://t.me/telegram"
+        try:
+            portfolio = db.normalize_portfolio_link(portfolio)
+        except Exception:
+            portfolio = "https://t.me/telegram"
+        await callback.message.edit_text(
+            "✅ Запись успешно отменена!\n\n"
+            "Вы можете записаться снова, если пожелаете.",
+            reply_markup=main_menu(portfolio, master_id)
+        )
+    else:
+        await callback.answer("✅ Запись отменена.", show_alert=True)
 
 
 @router.callback_query(F.data == "my_bookings")
 async def my_bookings(callback: CallbackQuery, state: FSMContext):
     items = db.list_user_active_bookings(callback.from_user.id)
     if not items:
-        return await callback.answer("У вас пока нет активных записей.", show_alert=True)
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="to_main"))
+        return await callback.message.edit_text(
+            "📅 <b>Мои записи</b>\n\n"
+            "У вас пока нет активных записей.",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+    
     text = "📅 <b>Мои записи</b>\n\n"
     builder = InlineKeyboardBuilder()
     for item in items:
         text += f"• #{item['id']} — {item['slot_at']}\n"
         builder.button(text=f"❌ Отменить #{item['id']}", callback_data=f"cancel_booking_{item['id']}")
     builder.adjust(1)
-    builder.button(text="⬅️ Назад", callback_data="to_main")
+    builder.button(text="⬅️ В главное меню", callback_data="to_main")
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data.startswith("cancel_booking_"))
-async def cancel_booking_specific(callback: CallbackQuery):
+async def cancel_booking_specific(callback: CallbackQuery, state: FSMContext):
     booking_id = int(callback.data.split("_")[-1])
     booking = db.cancel_booking_by_id(callback.from_user.id, booking_id)
     if not booking:
         return await callback.answer("Запись не найдена или уже отменена.", show_alert=True)
+    
     cancel_job(booking["reminder_job_id"])
     cancel_job(booking["review_job_id"])
     await callback.bot.send_message(booking["master_id"], f"Клиент отменил запись #{booking_id}.")
-    await callback.answer("Запись отменена.", show_alert=True)
+    
+    # Возвращаем в "Мои записи"
+    items = db.list_user_active_bookings(callback.from_user.id)
+    if not items:
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="to_main"))
+        await callback.message.edit_text(
+            "✅ Запись отменена!\n\n"
+            "У вас больше нет активных записей.",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+    else:
+        text = "📅 <b>Мои записи</b>\n\n"
+        builder = InlineKeyboardBuilder()
+        for item in items:
+            text += f"• #{item['id']} — {item['slot_at']}\n"
+            builder.button(text=f"❌ Отменить #{item['id']}", callback_data=f"cancel_booking_{item['id']}")
+        builder.adjust(1)
+        builder.button(text="⬅️ В главное меню", callback_data="to_main")
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data == "feedback_suggestion")
@@ -270,7 +363,8 @@ async def feedback_text_save(message: Message, state: FSMContext, bot: Bot):
     feedback_type = data.get("feedback_type", "suggestion")
     text = (message.text or "").strip()
     if not text:
-        return await message.answer("Сообщение не может быть пустым.")
+        return await message.answer("❌ Сообщение не может быть пустым.")
+    
     role = "master" if db.is_master_registered(message.from_user.id) else "client"
     db.create_feedback(message.from_user.id, role, feedback_type, text)
     try:
@@ -283,8 +377,24 @@ async def feedback_text_save(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception:
         pass
+    
     await state.clear()
-    await message.answer("✅ Спасибо! Сообщение отправлено владельцу бота.")
+    data = await state.get_data()
+    master_id = data.get("master_id")
+    if master_id:
+        profile = db.get_master_profile(master_id)
+        portfolio = profile["portfolio_link"] if profile else "https://t.me/telegram"
+        try:
+            portfolio = db.normalize_portfolio_link(portfolio)
+        except Exception:
+            portfolio = "https://t.me/telegram"
+        await message.answer(
+            "✅ Спасибо! Сообщение отправлено владельцу бота.",
+            reply_markup=main_menu(portfolio, master_id)
+        )
+    else:
+        await message.answer("✅ Спасибо! Сообщение отправлено владельцу бота.")
+
 
 @router.callback_query(F.data.startswith("rate_"))
 async def rate_master(callback: CallbackQuery):
